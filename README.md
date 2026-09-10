@@ -69,6 +69,7 @@ python main.py --bot 1h --once    # single check and exit (what GitHub Actions u
 | `uk_tax.py` | Illustrative UK Capital Gains Tax estimate on realised gains (not tax advice) |
 | `main.py` | Runs one bot's check (`--bot <key> --once`) or loops forever |
 | `export_tax_csv.py` | Exports a bot's trades as a CSV formatted for a tax tool/accountant |
+| `reconcile.py` | Matches the ledger against a real Kraken trade export - for if you ever go live |
 | `backtest.py` | Tests the strategy against real historical prices instead of guessing at settings |
 | `index.html` | Static dashboard, served by GitHub Pages, comparing all three bots |
 | `.github/workflows/paper-trade-*.yml` | Scheduled Actions workflows, one per bot, on that bot's own cadence |
@@ -159,6 +160,30 @@ part that's normally the tedious bit when starting from a raw exchange
 export. Column names are generic rather than matching one specific tool's
 import template; you may need to rename/remap columns for whichever tool
 you actually use.
+
+### Reconciling against Kraken (for if you ever go live)
+
+Not useful today - paper mode never touches a real Kraken account, so
+there's nothing real to check the ledger against. If you ever wire up
+real trading, `reconcile.py` compares the bot's ledger against a real
+trade history export downloaded from Kraken (Account → Export → Trades)
+and flags anything that doesn't line up:
+
+```bash
+python reconcile.py --bot 5m --kraken-export kraken_trades.csv
+```
+
+It groups Kraken's export by order ID first, since a single order can fill
+across several rows at slightly different prices if the order book didn't
+have the depth for one clean fill - those get combined into one
+volume-weighted trade before comparing, matching how the bot's ledger
+already records one row per buy/sell regardless of how it filled. Matches
+are found by nearest timestamp (within `--tolerance-minutes`, default 5)
+between trades of the same type, and it reports three things: trades that
+matched (flagging any price/volume/fee difference beyond a penny), trades
+the bot logged that Kraken has no record of, and trades Kraken executed
+that the bot doesn't know about - any of the latter two would mean
+something is actually wrong, not just noisy.
 
 ## Fee assumptions
 
