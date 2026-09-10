@@ -73,6 +73,10 @@
   }
   .legend .price::before { background: var(--accent); }
   .legend .value::before { background: var(--green); }
+  .legend .short::before { background: #f2cc60; }
+  .legend .long::before { background: #bc8cff; }
+  .legend .buy::before { background: var(--green); border-radius: 50%; }
+  .legend .sell::before { background: var(--red); border-radius: 50%; }
   table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
   th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
   th { color: var(--muted); font-weight: 500; font-size: 0.78rem; text-transform: uppercase; }
@@ -92,9 +96,15 @@
   <div class="cards" id="cards"></div>
 
   <div class="panel">
-    <h2>BTC price</h2>
-    <svg id="priceChart" viewBox="0 0 860 180" preserveAspectRatio="none"></svg>
-    <div class="legend"><span class="price">GBP per BTC</span></div>
+    <h2>Strategy: price, moving averages &amp; trades</h2>
+    <svg id="priceChart" viewBox="0 0 860 200"></svg>
+    <div class="legend">
+      <span class="price">BTC price</span>
+      <span class="short">Short MA (1h)</span>
+      <span class="long">Long MA (2h10m)</span>
+      <span class="buy">Buy</span>
+      <span class="sell">Sell</span>
+    </div>
   </div>
 
   <div class="panel">
@@ -134,26 +144,81 @@ function fmtGBP(n) {
   return "£" + Number(n).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function buildPath(values, w, h, pad) {
-  if (values.length === 0) return "";
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = (max - min) || 1;
-  const stepX = values.length > 1 ? (w - pad * 2) / (values.length - 1) : 0;
-  return values.map((v, i) => {
+function toNum(v) {
+  return v === undefined || v === null || v === "" ? null : Number(v);
+}
+
+// values may contain nulls (e.g. moving averages before enough history
+// exists) - the path breaks and resumes around gaps instead of drawing
+// a wrong connecting line or crashing on NaN.
+function buildPath(values, w, h, pad, yMin, yMax) {
+  const n = values.length;
+  if (n === 0) return "";
+  const range = (yMax - yMin) || 1;
+  const stepX = n > 1 ? (w - pad * 2) / (n - 1) : 0;
+  let d = "";
+  let drawing = false;
+  values.forEach((v, i) => {
+    if (v === null || v === undefined || isNaN(v)) { drawing = false; return; }
     const x = pad + i * stepX;
-    const y = h - pad - ((v - min) / range) * (h - pad * 2);
-    return (i === 0 ? "M" : "L") + x.toFixed(1) + "," + y.toFixed(1);
-  }).join(" ");
+    const y = h - pad - ((v - yMin) / range) * (h - pad * 2);
+    d += (drawing ? "L" : "M") + x.toFixed(1) + "," + y.toFixed(1) + " ";
+    drawing = true;
+  });
+  return d.trim();
 }
 
 function renderChart(svgId, values, color) {
   const svg = document.getElementById(svgId);
   const w = 860, h = 180, pad = 10;
-  const path = buildPath(values, w, h, pad);
-  svg.innerHTML = path
-    ? `<path d="${path}" fill="none" stroke="${color}" stroke-width="2.5" vector-effect="non-scaling-stroke"/>`
-    : `<text x="50%" y="50%" fill="var(--muted)" text-anchor="middle" font-size="14">No data yet</text>`;
+  const defined = values.filter(v => v !== null && !isNaN(v));
+  if (defined.length === 0) {
+    svg.innerHTML = `<text x="50%" y="50%" fill="var(--muted)" text-anchor="middle" font-size="14">No data yet</text>`;
+    return;
+  }
+  const path = buildPath(values, w, h, pad, Math.min(...defined), Math.max(...defined));
+  svg.innerHTML = `<path d="${path}" fill="none" stroke="${color}" stroke-width="2.5" vector-effect="non-scaling-stroke"/>`;
+}
+
+function renderStrategyChart(history) {
+  const svg = document.getElementById("priceChart");
+  const w = 860, h = 200, pad = 14;
+
+  const price = history.map(r => toNum(r.price_gbp));
+  const shortMa = history.map(r => toNum(r.short_ma));
+  const longMa = history.map(r => toNum(r.long_ma));
+
+  const defined = [...price, ...shortMa, ...longMa].filter(v => v !== null && !isNaN(v));
+  if (defined.length === 0) {
+    svg.innerHTML = `<text x="50%" y="50%" fill="var(--muted)" text-anchor="middle" font-size="14">No data yet</text>`;
+    return;
+  }
+  const yMin = Math.min(...defined), yMax = Math.max(...defined);
+
+  const priceD = buildPath(price, w, h, pad, yMin, yMax);
+  const shortD = buildPath(shortMa, w, h, pad, yMin, yMax);
+  const longD = buildPath(longMa, w, h, pad, yMin, yMax);
+
+  const stepX = history.length > 1 ? (w - pad * 2) / (history.length - 1) : 0;
+  const range = (yMax - yMin) || 1;
+  const toXY = (i, v) => [
+    pad + i * stepX,
+    h - pad - ((v - yMin) / range) * (h - pad * 2),
+  ];
+
+  const markers = history.map((r, i) => {
+    if (r.signal !== "buy" && r.signal !== "sell") return "";
+    const [x, y] = toXY(i, Number(r.price_gbp));
+    const color = r.signal === "buy" ? "var(--green)" : "var(--red)";
+    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4.5" fill="${color}" stroke="var(--panel)" stroke-width="1.5"/>`;
+  }).join("");
+
+  svg.innerHTML = `
+    <path d="${priceD}" fill="none" stroke="var(--accent)" stroke-width="2" vector-effect="non-scaling-stroke"/>
+    <path d="${shortD}" fill="none" stroke="#f2cc60" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+    <path d="${longD}" fill="none" stroke="#bc8cff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+    ${markers}
+  `;
 }
 
 function renderCards(latest, startBalance, feesPaid) {
@@ -200,14 +265,16 @@ function renderChecks(history) {
     <tr>
       <td>${new Date(r.timestamp).toLocaleString()}</td>
       <td>${fmtGBP(r.price_gbp)}</td>
-      <td>${r.signal}</td>
+      <td>${r.short_ma ? fmtGBP(r.short_ma) : "—"}</td>
+      <td>${r.long_ma ? fmtGBP(r.long_ma) : "—"}</td>
+      <td class="${r.signal === 'buy' || r.signal === 'sell' ? r.signal : ''}">${r.signal}</td>
       <td>${fmtGBP(r.cash_gbp)}</td>
       <td>${Number(r.coin_holdings).toFixed(6)}</td>
       <td>${fmtGBP(r.total_value_gbp)}</td>
     </tr>
   `).join("");
   el.innerHTML = `<table>
-    <thead><tr><th>Time</th><th>Price</th><th>Signal</th><th>Cash</th><th>Holdings</th><th>Total value</th></tr></thead>
+    <thead><tr><th>Time</th><th>Price</th><th>Short MA</th><th>Long MA</th><th>Signal</th><th>Cash</th><th>Holdings</th><th>Total value</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
 }
@@ -233,7 +300,7 @@ async function load() {
       "Simulated trading only — no real money involved. Fees modelled at Kraken's standard taker rate. Auto-refreshes every minute.";
 
     renderCards(latest, 100.0, ledger.fees_paid_gbp || 0);
-    renderChart("priceChart", history.map(r => Number(r.price_gbp)), "var(--accent)");
+    renderStrategyChart(history);
     renderChart("valueChart", history.map(r => Number(r.total_value_gbp)), "var(--green)");
     renderTrades(ledger.trade_history);
     renderChecks(history);

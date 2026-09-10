@@ -16,13 +16,17 @@ def _sma(prices: list[float], period: int) -> float:
     return sum(prices[-period:]) / period
 
 
-def compute_signal(prices: list[float], short_period: int, long_period: int) -> str:
+def compute_signal(prices: list[float], short_period: int, long_period: int):
     """
     prices: closing prices, oldest first, most recent last.
     Needs at least long_period + 1 prices to detect a crossover.
+
+    Returns (signal, short_ma, long_ma). short_ma/long_ma are None when
+    there isn't enough price history yet - both are returned (not just the
+    signal) so callers can chart the two averages, not only the crossover.
     """
     if len(prices) < long_period + 1:
-        return "hold"
+        return "hold", None, None
 
     short_now = _sma(prices, short_period)
     long_now = _sma(prices, long_period)
@@ -34,7 +38,10 @@ def compute_signal(prices: list[float], short_period: int, long_period: int) -> 
     crossed_down = short_prev >= long_prev and short_now < long_now
 
     if crossed_up:
-        return "buy"
-    if crossed_down:
-        return "sell"
-    return "hold"
+        signal = "buy"
+    elif crossed_down:
+        signal = "sell"
+    else:
+        signal = "hold"
+
+    return signal, short_now, long_now

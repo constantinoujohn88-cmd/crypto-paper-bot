@@ -66,7 +66,7 @@ def run_once(ledger: dict) -> None:
         config.KRAKEN_PAIR, config.OHLC_INTERVAL_MINUTES
     )
     current_price = prices[-1]
-    signal = strategy.compute_signal(
+    signal, short_ma, long_ma = strategy.compute_signal(
         prices, config.SHORT_MA_PERIOD, config.LONG_MA_PERIOD
     )
 
@@ -98,6 +98,8 @@ def run_once(ledger: dict) -> None:
     append_history(config.HISTORY_FILE, {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "price_gbp": current_price,
+        "short_ma": short_ma if short_ma is not None else "",
+        "long_ma": long_ma if long_ma is not None else "",
         "signal": signal,
         "cash_gbp": ledger["cash_gbp"],
         "coin_holdings": ledger["coin_holdings"],
