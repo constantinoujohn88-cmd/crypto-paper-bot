@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .env
-trades.log
+trades*.log
 venv/
 streamlit.log
+http.log

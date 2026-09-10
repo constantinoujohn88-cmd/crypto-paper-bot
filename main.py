@@ -1,12 +1,16 @@
 """
-Entry point. Runs an infinite loop:
-  1. Fetch recent price data
+Entry point. Runs an infinite loop for ONE bot (see config.BOTS):
+  1. Fetch recent price data at that bot's candle cadence
   2. Compute a buy/sell/hold signal
   3. Act on it (paper trade only, unless PAPER_MODE is turned off - see README)
-  4. Log everything
+  4. Log everything to that bot's own files
   5. Sleep, repeat
 
-Run with:  python main.py
+Multiple bots (different cadences, same strategy periods) run as completely
+independent processes/invocations, each with --bot <key>, so their state
+never mixes - that's what makes a fair side-by-side comparison possible.
+
+Run with:  python main.py --bot 1h
 Stop with: Ctrl+C
 """
 import argparse
@@ -33,14 +37,15 @@ def append_history(path: str, row: dict) -> None:
         writer.writerow(row)
 
 
-def setup_logging():
+def setup_logging(log_file: str):
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
         handlers=[
-            logging.FileHandler(config.LOG_FILE, encoding="utf-8"),
+            logging.FileHandler(log_file, encoding="utf-8"),
             logging.StreamHandler(),
         ],
+        force=True,  # allow re-configuring if main() is invoked more than once in-process
     )
 
 
@@ -61,13 +66,13 @@ def place_live_order(action: str, price: float):
     )
 
 
-def run_once(ledger: dict) -> None:
+def run_once(ledger: dict, bot_cfg: dict, files: dict) -> None:
     prices = data_fetcher.get_recent_closes(
-        config.KRAKEN_PAIR, config.OHLC_INTERVAL_MINUTES
+        config.KRAKEN_PAIR, bot_cfg["interval_minutes"]
     )
     current_price = prices[-1]
     signal, short_ma, long_ma = strategy.compute_signal(
-        prices, config.SHORT_MA_PERIOD, config.LONG_MA_PERIOD
+        prices, bot_cfg["short_period"], bot_cfg["long_period"]
     )
 
     logging.info(
@@ -89,13 +94,13 @@ def run_once(ledger: dict) -> None:
 
     if trade:
         logging.info("Executed %s: %s", trade["action"].upper(), trade)
-        ledger_module.save_ledger(config.LEDGER_FILE, ledger)
+        ledger_module.save_ledger(files["ledger"], ledger)
 
     total_value = ledger_module.total_value_gbp(ledger, current_price)
     logging.info("Portfolio value: £%.2f (started at £%.2f)",
                  total_value, config.STARTING_BALANCE_GBP)
 
-    append_history(config.HISTORY_FILE, {
+    append_history(files["history"], {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "price_gbp": current_price,
         "short_ma": short_ma if short_ma is not None else "",
@@ -110,28 +115,36 @@ def run_once(ledger: dict) -> None:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
+        "--bot", choices=list(config.BOTS.keys()), default=config.DEFAULT_BOT,
+        help="Which bot config to run (see config.BOTS) - each has its own "
+             "candle cadence and its own ledger/history/log files.",
+    )
+    parser.add_argument(
         "--once", action="store_true",
         help="Run a single check and exit, instead of looping forever. "
              "Used when something else does the scheduling (e.g. GitHub Actions cron).",
     )
     args = parser.parse_args()
 
-    setup_logging()
+    bot_cfg = config.BOTS[args.bot]
+    files = config.bot_files(args.bot)
+
+    setup_logging(files["log"])
 
     if config.PAPER_MODE:
-        logging.info("Running in PAPER MODE - no real money or real orders involved.")
+        logging.info("[%s] Running in PAPER MODE - no real money or real orders involved.", args.bot)
     else:
-        logging.warning("PAPER_MODE is False - this bot would attempt REAL orders.")
+        logging.warning("[%s] PAPER_MODE is False - this bot would attempt REAL orders.", args.bot)
 
-    ledger = ledger_module.load_ledger(config.LEDGER_FILE, config.STARTING_BALANCE_GBP)
+    ledger = ledger_module.load_ledger(files["ledger"], config.STARTING_BALANCE_GBP)
 
     if args.once:
-        run_once(ledger)
+        run_once(ledger, bot_cfg, files)
         return
 
     while True:
         try:
-            run_once(ledger)
+            run_once(ledger, bot_cfg, files)
         except Exception as e:
             logging.error("Error during check: %s", e)
 

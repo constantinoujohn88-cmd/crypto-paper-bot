@@ -1,66 +1,112 @@
-# Crypto Paper Trading Bot
+# Crypto Paper Trading Bots
 
-A starter bot that simulates trading BTC/GBP using live Kraken prices and a
-simple moving-average crossover strategy. It starts with a virtual £100 and
-never touches real money unless you deliberately change that (see below).
+Three bots that simulate trading BTC/GBP using live Kraken prices and the
+same moving-average crossover strategy - the only difference between them
+is how often they check the market. Each starts with its own virtual £100
+and never touches real money unless you deliberately change that (see
+below).
 
 ## What it does
 
-Every 5 minutes (configurable), the bot:
+Each bot, on its own schedule:
 1. Pulls recent BTC/GBP price candles from Kraken's public API
 2. Computes a short-term and long-term moving average
 3. If the short average crosses above the long average → simulated **buy**
 4. If it crosses below → simulated **sell**
-5. Logs the decision and, if a trade happened, updates a local ledger file
+5. Logs the decision and, if a trade happened, updates its own ledger file
 
 Nothing here places a real order. `config.PAPER_MODE = True` by default, and
 `main.py` will refuse to go further than logging a warning if you turn it off
 without also implementing `place_live_order()`.
 
+## Why three bots
+
+`config.BOTS` defines three independent bots with **identical** strategy
+periods (12/26 moving average) but different candle cadences:
+
+| Bot | Candle size | Roughly |
+|---|---|---|
+| `5m` | 5 minutes | reacts fast, checks constantly |
+| `1h` | 1 hour | reacts to hourly trends |
+| `1d` | 1 day | reacts to multi-day trends |
+
+Keeping the periods identical and varying only the cadence isolates one
+question cleanly: does trading frequency alone change the outcome? See
+`backtest.py` below - the honest answer, from real historical data, is
+"it depends on the market regime, but faster trading reliably means paying
+more in fees regardless of regime."
+
 ## Running it
 
-This bot is designed to run on **GitHub Actions**, not on your own machine:
-a scheduled workflow (`.github/workflows/paper-trade.yml`) runs one check
-every 5 minutes, forever, for free, without a server or a terminal window
-staying open. Each run commits the updated `ledger.json` and `history.csv`
-back to the repo, so the trade history is versioned in git.
+This is designed to run on **GitHub Actions**, not on your own machine: three
+scheduled workflows (`.github/workflows/paper-trade-5m.yml`, `-1h.yml`,
+`-1d.yml`) each run one bot's check on its own cadence, forever, for free,
+without a server or a terminal window staying open. Each run commits that
+bot's updated `ledger_<bot>.json` and `history_<bot>.csv` back to the repo,
+so the trade history is versioned in git.
 
-To run it locally instead (e.g. to test changes before pushing):
+To run one locally instead (e.g. to test changes before pushing):
 
 ```bash
 cd crypto-paper-bot
 python3 -m venv venv
 source venv/bin/activate      # on Windows: venv\Scripts\activate
 pip install -r requirements.txt
-python main.py           # loops forever, checking every CHECK_INTERVAL_SECONDS
-python main.py --once    # single check and exit (what GitHub Actions uses)
+python main.py --bot 1h           # loops forever, checking every CHECK_INTERVAL_SECONDS
+python main.py --bot 1h --once    # single check and exit (what GitHub Actions uses)
 ```
+
+`--bot` is one of `5m`, `1h`, `1d` (defaults to `5m`).
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `config.py` | All the settings you're likely to want to change |
+| `config.py` | Bot definitions (`BOTS`) and all the settings you're likely to want to change |
 | `data_fetcher.py` | Pulls price data from Kraken's public (no-auth) API |
 | `strategy.py` | The moving-average crossover logic — swap this out to try other strategies |
-| `ledger.py` | Tracks the simulated balance, holdings, and trade history |
-| `main.py` | Runs one check (`--once`) or loops forever |
-| `index.html` | Static dashboard, served by GitHub Pages, reads `history.csv`/`ledger.json` |
-| `.github/workflows/paper-trade.yml` | Scheduled Actions workflow that runs the bot every 5 min |
+| `ledger.py` | Tracks a simulated balance, holdings, and trade history |
+| `main.py` | Runs one bot's check (`--bot <key> --once`) or loops forever |
+| `backtest.py` | Tests the strategy against real historical prices instead of guessing at settings |
+| `index.html` | Static dashboard, served by GitHub Pages, comparing all three bots |
+| `.github/workflows/paper-trade-*.yml` | Scheduled Actions workflows, one per bot, on that bot's own cadence |
 
 ## Watching your trades
 
-`main.py` writes a snapshot every check to `history.csv` (price, signal,
-cash, holdings, portfolio value) in addition to `ledger.json` (trade
-history). `index.html` is a small dashboard that reads both files directly
-— no build step, no server — and is published via GitHub Pages at:
+Each bot writes a snapshot every check to its own `history_<bot>.csv`
+(price, moving averages, signal, cash, holdings, portfolio value) in
+addition to `ledger_<bot>.json` (trade history). `index.html` is a
+dashboard that reads all three bots' files directly - no build step, no
+server - and is published via GitHub Pages at:
 
 `https://<your-username>.github.io/<repo-name>/`
 
-It shows current portfolio value/cash/holdings, price and portfolio value
-charts, and tables of every trade and every check. It re-fetches the data
-every 60 seconds, so refresh the page (or just leave it open) to watch it
-update as Actions runs land.
+It shows a side-by-side comparison (portfolio value chart with all three
+bots overlaid, one line each) plus a per-bot detail view (price + moving
+averages + buy/sell markers, portfolio value, trade history, recent
+checks) behind tabs. It re-fetches the data every 60 seconds, so refresh
+the page (or just leave it open) to watch it update as Actions runs land.
+
+## Backtesting before you trust a config
+
+`backtest.py` replays the *exact same* strategy and fee logic against real
+historical Kraken prices, instead of guessing at settings:
+
+```bash
+python backtest.py --bot 1h              # test the hourly bot's cadence
+python backtest.py --bot 1d --source history   # test against this repo's own accumulated data
+```
+
+Kraken's public API always caps a request at ~720 candles regardless of
+candle size, so bigger candles buy a longer look-back at the cost of
+coarser signals: 5-minute candles get ~2.5 days of history, hourly gets
+~30 days, daily gets ~2 years. Worth knowing before trusting any single
+backtest: which parameter set "wins" can flip completely depending on the
+window and market regime tested - a fast config that loses badly in a
+choppy 3-day window can be the best performer over 2 years, and vice
+versa. The one thing that holds up consistently across every window
+tested: trading less often reliably means paying less in fees. That's
+arithmetic, not a market call.
 
 ## Fee assumptions
 
@@ -69,21 +115,25 @@ exchange does it — `config.TRADING_FEE_PCT` (0.26% by default, Kraken's
 standard taker rate at the lowest volume tier). This matters more than it
 sounds: a bot that trades often can lose a meaningful chunk of a small £100
 balance to fees alone, even before the strategy's own performance is
-considered. Total fees paid are tracked in `ledger.json` and shown on the
+considered. Total fees paid are tracked in each `ledger_<bot>.json` and shown on the
 dashboard, so "portfolio value" always reflects the return *after* fees —
 not an idealised number. If Kraken's fee schedule changes, or you move up
 a volume tier, update `TRADING_FEE_PCT` to keep the simulation honest.
 
 ## Tuning the strategy
 
-`config.py` controls:
-- `SHORT_MA_PERIOD` / `LONG_MA_PERIOD` — how fast/slow the two averages react
-- `OHLC_INTERVAL_MINUTES` — the candle size the averages are computed over
-- `CHECK_INTERVAL_SECONDS` — how often the bot checks the market
+`config.BOTS[<key>]` controls, per bot:
+- `short_period` / `long_period` — how fast/slow the two averages react
+- `interval_minutes` — the candle size the averages are computed over
 
-Shorter periods react faster but trade more often (more fees if live, more
-noise either way). There's no single "correct" setting — it's worth watching
-`trades.log` for a few days and adjusting based on what you see.
+`CHECK_INTERVAL_SECONDS` (shared) controls how often a *local* continuous
+run checks the market - GitHub Actions ignores this and uses each
+workflow's own cron schedule instead.
+
+Shorter periods and smaller candles react faster but trade more often (more
+fees, more noise). There's no single "correct" setting - see the
+Backtesting section above rather than guessing, and watch `trades_<bot>.log`
+for a few days before adjusting anything.
 
 ## Going live (read this fully before doing it)
 

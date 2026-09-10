@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Crypto Paper Trading Bot</title>
+<title>Crypto Paper Trading Bots</title>
 <style>
   :root {
     color-scheme: light dark;
@@ -15,6 +15,9 @@
     --accent: #58a6ff;
     --green: #3fb950;
     --red: #f85149;
+    --bot-5m: #58a6ff;
+    --bot-1h: #f2cc60;
+    --bot-1d: #bc8cff;
   }
   @media (prefers-color-scheme: light) {
     :root {
@@ -33,14 +36,16 @@
     font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
     padding: 24px 20px 60px;
   }
-  .wrap { max-width: 920px; margin: 0 auto; }
+  .wrap { max-width: 960px; margin: 0 auto; }
   h1 { font-size: 1.5rem; margin: 0 0 4px; }
-  .subtitle { color: var(--muted); font-size: 0.9rem; margin-bottom: 24px; }
+  h2.section { font-size: 1.15rem; margin: 34px 0 4px; }
+  .section-sub { color: var(--muted); font-size: 0.85rem; margin: 0 0 14px; }
+  .subtitle { color: var(--muted); font-size: 0.9rem; margin-bottom: 20px; }
   .cards {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
     gap: 12px;
-    margin-bottom: 28px;
+    margin-bottom: 18px;
   }
   .card {
     background: var(--panel);
@@ -48,6 +53,7 @@
     border-radius: 10px;
     padding: 14px 16px;
   }
+  .card.bot-card { border-left: 3px solid var(--dot); }
   .card .label { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
   .card .value { font-size: 1.4rem; font-weight: 600; margin-top: 4px; }
   .card .delta { font-size: 0.85rem; margin-top: 2px; }
@@ -60,9 +66,9 @@
     padding: 18px 20px;
     margin-bottom: 22px;
   }
-  .panel h2 { font-size: 1.05rem; margin: 0 0 12px; }
+  .panel h3 { font-size: 1.05rem; margin: 0 0 12px; }
   svg { width: 100%; height: auto; display: block; }
-  .legend { display: flex; gap: 16px; margin-top: 8px; font-size: 0.82rem; color: var(--muted); }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 8px; font-size: 0.82rem; color: var(--muted); }
   .legend span::before {
     content: "";
     display: inline-block;
@@ -77,6 +83,9 @@
   .legend .long::before { background: #bc8cff; }
   .legend .buy::before { background: var(--green); border-radius: 50%; }
   .legend .sell::before { background: var(--red); border-radius: 50%; }
+  .legend .dot-5m::before { background: var(--bot-5m); }
+  .legend .dot-1h::before { background: var(--bot-1h); }
+  .legend .dot-1d::before { background: var(--bot-1d); }
   table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
   th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
   th { color: var(--muted); font-weight: 500; font-size: 0.78rem; text-transform: uppercase; }
@@ -86,48 +95,57 @@
   .empty { color: var(--muted); font-style: italic; padding: 8px 0; }
   .table-scroll { overflow-x: auto; }
   footer { color: var(--muted); font-size: 0.8rem; text-align: center; margin-top: 30px; }
+
+  .tabs { display: flex; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
+  .tab-btn {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 0.88rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .tab-btn .dot { width: 9px; height: 9px; border-radius: 50%; }
+  .tab-btn.active { border-color: var(--dot-color, var(--accent)); font-weight: 600; }
+  .bot-panel[hidden] { display: none; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Crypto Paper Trading Bot</h1>
+  <h1>Crypto Paper Trading Bots</h1>
   <div class="subtitle" id="subtitle">Simulated trading only — no real money involved. Loading…</div>
 
-  <div class="cards" id="cards"></div>
+  <h2 class="section">Compare cadences</h2>
+  <p class="section-sub">Three bots, identical strategy and periods (12/26 moving average crossover), each with its own independent £100 and its own trades. The <em>only</em> difference between them is how often they check the market and how big a candle they react to — this is a controlled test of whether trading frequency alone changes the outcome.</p>
+
+  <div class="cards" id="compareCards"></div>
 
   <div class="panel">
-    <h2>Strategy: price, moving averages &amp; trades</h2>
-    <svg id="priceChart" viewBox="0 0 860 200"></svg>
-    <div class="legend">
-      <span class="price">BTC price</span>
-      <span class="short">Short MA (1h)</span>
-      <span class="long">Long MA (2h10m)</span>
-      <span class="buy">Buy</span>
-      <span class="sell">Sell</span>
-    </div>
+    <h3>Portfolio value — all three bots</h3>
+    <svg id="compareChart" viewBox="0 0 860 220"></svg>
+    <div class="legend" id="compareLegend"></div>
   </div>
 
-  <div class="panel">
-    <h2>Portfolio value</h2>
-    <svg id="valueChart" viewBox="0 0 860 180" preserveAspectRatio="none"></svg>
-    <div class="legend"><span class="value">Total value (£), started at £100</span></div>
-  </div>
+  <h2 class="section">Bot detail</h2>
+  <div class="tabs" id="tabs"></div>
 
-  <div class="panel">
-    <h2>Trade history</h2>
-    <div class="table-scroll" id="trades"></div>
-  </div>
-
-  <div class="panel">
-    <h2>Recent checks</h2>
-    <div class="table-scroll" id="checks"></div>
-  </div>
+  <div id="botPanels"></div>
 
   <footer id="footer"></footer>
 </div>
 
 <script>
 const REFRESH_MS = 60000;
+const BOTS = [
+  { key: "5m", label: "5-minute candles", color: "var(--bot-5m)", cssVar: "--bot-5m" },
+  { key: "1h", label: "Hourly candles",   color: "var(--bot-1h)", cssVar: "--bot-1h" },
+  { key: "1d", label: "Daily candles",    color: "var(--bot-1d)", cssVar: "--bot-1d" },
+];
+const STARTING_BALANCE = 100.0;
 
 function parseCSV(text) {
   const lines = text.trim().split(/\r\n|\r|\n/);
@@ -168,6 +186,26 @@ function buildPath(values, w, h, pad, yMin, yMax) {
   return d.trim();
 }
 
+// Time-based path builder, for overlaying series that don't share the same
+// number of points or the same check times (different bots check at
+// different cadences) - x position comes from actual elapsed time, not
+// array index, so the three bots line up correctly on one shared chart.
+function buildTimePath(points, w, h, pad, tMin, tMax, yMin, yMax) {
+  if (points.length === 0) return "";
+  const tRange = (tMax - tMin) || 1;
+  const yRange = (yMax - yMin) || 1;
+  let d = "";
+  let drawing = false;
+  points.forEach(p => {
+    if (p.v === null || p.v === undefined || isNaN(p.v)) { drawing = false; return; }
+    const x = pad + ((p.t - tMin) / tRange) * (w - pad * 2);
+    const y = h - pad - ((p.v - yMin) / yRange) * (h - pad * 2);
+    d += (drawing ? "L" : "M") + x.toFixed(1) + "," + y.toFixed(1) + " ";
+    drawing = true;
+  });
+  return d.trim();
+}
+
 function renderChart(svgId, values, color) {
   const svg = document.getElementById(svgId);
   const w = 860, h = 180, pad = 10;
@@ -180,8 +218,8 @@ function renderChart(svgId, values, color) {
   svg.innerHTML = `<path d="${path}" fill="none" stroke="${color}" stroke-width="2.5" vector-effect="non-scaling-stroke"/>`;
 }
 
-function renderStrategyChart(history) {
-  const svg = document.getElementById("priceChart");
+function renderStrategyChart(svgId, history) {
+  const svg = document.getElementById(svgId);
   const w = 860, h = 200, pad = 14;
 
   const price = history.map(r => toNum(r.price_gbp));
@@ -221,11 +259,67 @@ function renderStrategyChart(history) {
   `;
 }
 
-function renderCards(latest, startBalance, feesPaid) {
-  const pnl = latest.total_value_gbp - startBalance;
+function renderCompareChart(botsData) {
+  const svg = document.getElementById("compareChart");
+  const w = 860, h = 220, pad = 14;
+
+  const allPoints = botsData.flatMap(b => b.history.map(r => ({
+    t: new Date(r.timestamp).getTime(),
+    v: toNum(r.total_value_gbp),
+  })).filter(p => p.v !== null));
+
+  if (allPoints.length === 0) {
+    svg.innerHTML = `<text x="50%" y="50%" fill="var(--muted)" text-anchor="middle" font-size="14">No data yet</text>`;
+    return;
+  }
+
+  const tMin = Math.min(...allPoints.map(p => p.t));
+  const tMax = Math.max(...allPoints.map(p => p.t));
+  const values = allPoints.map(p => p.v);
+  const yMin = Math.min(STARTING_BALANCE, ...values);
+  const yMax = Math.max(STARTING_BALANCE, ...values);
+
+  const baselineY = h - pad - ((STARTING_BALANCE - yMin) / ((yMax - yMin) || 1)) * (h - pad * 2);
+
+  const paths = botsData.map(b => {
+    const points = b.history
+      .map(r => ({ t: new Date(r.timestamp).getTime(), v: toNum(r.total_value_gbp) }))
+      .filter(p => p.v !== null);
+    const d = buildTimePath(points, w, h, pad, tMin, tMax, yMin, yMax);
+    return `<path d="${d}" fill="none" stroke="${b.meta.color}" stroke-width="2.5" vector-effect="non-scaling-stroke"/>`;
+  }).join("");
+
+  svg.innerHTML = `
+    <line x1="${pad}" y1="${baselineY.toFixed(1)}" x2="${w - pad}" y2="${baselineY.toFixed(1)}"
+          stroke="var(--muted)" stroke-width="1" stroke-dasharray="4,4" opacity="0.5"/>
+    ${paths}
+  `;
+}
+
+function renderCompareCards(botsData) {
+  const el = document.getElementById("compareCards");
+  el.innerHTML = botsData.map(b => {
+    const latest = b.history[b.history.length - 1];
+    if (!latest) {
+      return `<div class="card bot-card" style="--dot:${b.meta.color}"><div class="label">${b.meta.label}</div><div class="empty">No data yet</div></div>`;
+    }
+    const pnl = latest.total_value_gbp - STARTING_BALANCE;
+    const pnlClass = pnl >= 0 ? "up" : "down";
+    const pnlSign = pnl >= 0 ? "+" : "";
+    const trades = (b.ledger.trade_history || []).length;
+    return `<div class="card bot-card" style="--dot:${b.meta.color}">
+      <div class="label">${b.meta.label}</div>
+      <div class="value">${fmtGBP(latest.total_value_gbp)}</div>
+      <div class="delta ${pnlClass}">${pnlSign}${fmtGBP(pnl)} · ${trades} trade${trades === 1 ? "" : "s"} · ${fmtGBP(b.ledger.fees_paid_gbp || 0)} fees</div>
+    </div>`;
+  }).join("");
+}
+
+function renderCards(containerId, latest, feesPaid) {
+  const pnl = latest.total_value_gbp - STARTING_BALANCE;
   const pnlClass = pnl >= 0 ? "up" : "down";
   const pnlSign = pnl >= 0 ? "+" : "";
-  document.getElementById("cards").innerHTML = `
+  document.getElementById(containerId).innerHTML = `
     <div class="card"><div class="label">Portfolio value</div><div class="value">${fmtGBP(latest.total_value_gbp)}</div>
       <div class="delta ${pnlClass}">${pnlSign}${fmtGBP(pnl)} after fees</div></div>
     <div class="card"><div class="label">Cash</div><div class="value">${fmtGBP(latest.cash_gbp)}</div></div>
@@ -235,8 +329,8 @@ function renderCards(latest, startBalance, feesPaid) {
   `;
 }
 
-function renderTrades(trades) {
-  const el = document.getElementById("trades");
+function renderTrades(containerId, trades) {
+  const el = document.getElementById(containerId);
   if (!trades || trades.length === 0) {
     el.innerHTML = `<div class="empty">No trades yet — the strategy hasn't seen a crossover.</div>`;
     return;
@@ -258,8 +352,8 @@ function renderTrades(trades) {
   </table>`;
 }
 
-function renderChecks(history) {
-  const el = document.getElementById("checks");
+function renderChecks(containerId, history) {
+  const el = document.getElementById(containerId);
   const recent = [...history].reverse().slice(0, 50);
   const rows = recent.map(r => `
     <tr>
@@ -279,39 +373,98 @@ function renderChecks(history) {
   </table>`;
 }
 
+function buildBotPanelsSkeleton() {
+  document.getElementById("tabs").innerHTML = BOTS.map((b, i) => `
+    <button class="tab-btn${i === 0 ? " active" : ""}" data-bot="${b.key}" style="--dot-color:${b.color}">
+      <span class="dot" style="background:${b.color}"></span>${b.label}
+    </button>
+  `).join("");
+
+  document.getElementById("botPanels").innerHTML = BOTS.map((b, i) => `
+    <div class="bot-panel" id="panel-${b.key}" ${i === 0 ? "" : "hidden"}>
+      <div class="cards" id="cards-${b.key}"></div>
+      <div class="panel">
+        <h3>Strategy: price, moving averages &amp; trades</h3>
+        <svg id="priceChart-${b.key}" viewBox="0 0 860 200"></svg>
+        <div class="legend">
+          <span class="price">BTC price</span>
+          <span class="short">Short MA</span>
+          <span class="long">Long MA</span>
+          <span class="buy">Buy</span>
+          <span class="sell">Sell</span>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Portfolio value</h3>
+        <svg id="valueChart-${b.key}" viewBox="0 0 860 180" preserveAspectRatio="none"></svg>
+        <div class="legend"><span class="value">Total value (£), started at £100</span></div>
+      </div>
+      <div class="panel">
+        <h3>Trade history</h3>
+        <div class="table-scroll" id="trades-${b.key}"></div>
+      </div>
+      <div class="panel">
+        <h3>Recent checks</h3>
+        <div class="table-scroll" id="checks-${b.key}"></div>
+      </div>
+    </div>
+  `).join("");
+
+  document.querySelectorAll(".tab-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      BOTS.forEach(b => {
+        document.getElementById(`panel-${b.key}`).hidden = (b.key !== btn.dataset.bot);
+      });
+    });
+  });
+}
+
+async function fetchBot(bot) {
+  const [historyRes, ledgerRes] = await Promise.all([
+    fetch(`history_${bot.key}.csv?_=` + Date.now()),
+    fetch(`ledger_${bot.key}.json?_=` + Date.now()),
+  ]);
+  const history = historyRes.ok ? parseCSV(await historyRes.text()) : [];
+  const ledger = ledgerRes.ok ? await ledgerRes.json() : { trade_history: [], fees_paid_gbp: 0 };
+  return { meta: bot, history, ledger };
+}
+
 async function load() {
   try {
-    const [historyRes, ledgerRes] = await Promise.all([
-      fetch("history.csv?_=" + Date.now()),
-      fetch("ledger.json?_=" + Date.now()),
-    ]);
+    const botsData = await Promise.all(BOTS.map(fetchBot));
+    const anyData = botsData.some(b => b.history.length > 0);
 
-    if (!historyRes.ok) {
-      document.getElementById("subtitle").textContent =
-        "No data yet — waiting for the bot's first scheduled check.";
-      return;
-    }
+    document.getElementById("subtitle").textContent = anyData
+      ? "Simulated trading only — no real money involved. Fees modelled at Kraken's standard taker rate. Auto-refreshes every minute."
+      : "No data yet — waiting for the bots' first scheduled checks.";
 
-    const history = parseCSV(await historyRes.text());
-    const ledger = ledgerRes.ok ? await ledgerRes.json() : { trade_history: [], fees_paid_gbp: 0 };
-    const latest = history[history.length - 1];
+    renderCompareCards(botsData);
+    renderCompareChart(botsData);
+    document.getElementById("compareLegend").innerHTML = BOTS.map(b =>
+      `<span class="dot-${b.key}">${b.label}</span>`
+    ).join("");
 
-    document.getElementById("subtitle").textContent =
-      "Simulated trading only — no real money involved. Fees modelled at Kraken's standard taker rate. Auto-refreshes every minute.";
+    botsData.forEach(b => {
+      const latest = b.history[b.history.length - 1];
+      if (!latest) return;
+      renderCards(`cards-${b.meta.key}`, latest, b.ledger.fees_paid_gbp || 0);
+      renderStrategyChart(`priceChart-${b.meta.key}`, b.history);
+      renderChart(`valueChart-${b.meta.key}`, b.history.map(r => Number(r.total_value_gbp)), "var(--green)");
+      renderTrades(`trades-${b.meta.key}`, b.ledger.trade_history);
+      renderChecks(`checks-${b.meta.key}`, b.history);
+    });
 
-    renderCards(latest, 100.0, ledger.fees_paid_gbp || 0);
-    renderStrategyChart(history);
-    renderChart("valueChart", history.map(r => Number(r.total_value_gbp)), "var(--green)");
-    renderTrades(ledger.trade_history);
-    renderChecks(history);
-
+    const totalChecks = botsData.reduce((sum, b) => sum + b.history.length, 0);
     document.getElementById("footer").textContent =
-      "Last updated " + new Date().toLocaleTimeString() + " · " + history.length + " checks logged";
+      "Last updated " + new Date().toLocaleTimeString() + " · " + totalChecks + " total checks logged across all bots";
   } catch (err) {
     document.getElementById("subtitle").textContent = "Couldn't load data: " + err.message;
   }
 }
 
+buildBotPanelsSkeleton();
 load();
 setInterval(load, REFRESH_MS);
 </script>

@@ -1,8 +1,8 @@
-name: Paper trade check
+name: Paper trade check (1d bot)
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "0 * * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -24,16 +24,17 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - run: python main.py --once
+      - run: python main.py --bot 1d --once
 
       - name: Commit updated ledger/history
         run: |
           git config user.name "paper-trading-bot"
           git config user.email "actions@users.noreply.github.com"
-          for f in ledger.json history.csv; do
+          for f in ledger_1d.json history_1d.csv; do
             if [ -f "$f" ]; then
               git add "$f"
             fi
           done
-          git diff --cached --quiet || git commit -m "Bot check: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git diff --cached --quiet || git commit -m "1d bot check: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git pull --rebase --autostash origin main
           git push

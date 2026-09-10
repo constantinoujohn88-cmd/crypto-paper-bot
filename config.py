@@ -4,17 +4,50 @@ Central config. Change these values to tune the bot.
 
 # --- Market ---
 KRAKEN_PAIR = "XBTGBP"          # BTC/GBP on Kraken. See https://api.kraken.com/0/public/AssetPairs
-OHLC_INTERVAL_MINUTES = 5       # candle size Kraken returns (1, 5, 15, 30, 60, ...)
 
-# --- Strategy: moving average crossover ---
-SHORT_MA_PERIOD = 12            # ~1 hour of 5-min candles
-LONG_MA_PERIOD = 26             # ~2h10m of 5-min candles
+# --- Multiple bots, same strategy, different candle cadence ---
+# Each runs completely independently (its own £100, own ledger, own history)
+# so you can directly compare how much cadence alone changes the outcome.
+# Short/long periods are deliberately IDENTICAL across bots - cadence is the
+# only variable being tested, not the strategy tuning. See backtest.py for
+# evidence this matters: which period pair "wins" flips depending on the
+# window tested, but trading less often reliably means paying less in fees
+# regardless of regime.
+BOTS = {
+    "5m": {
+        "label": "5-minute candles",
+        "interval_minutes": 5,
+        "short_period": 12,
+        "long_period": 26,
+    },
+    "1h": {
+        "label": "Hourly candles",
+        "interval_minutes": 60,
+        "short_period": 12,
+        "long_period": 26,
+    },
+    "1d": {
+        "label": "Daily candles",
+        "interval_minutes": 1440,
+        "short_period": 12,
+        "long_period": 26,
+    },
+}
+DEFAULT_BOT = "5m"
+
+
+def bot_files(bot_key: str) -> dict:
+    """File paths for one bot's state - kept separate per bot so they never
+    collide or interfere with each other."""
+    return {
+        "ledger": f"ledger_{bot_key}.json",
+        "history": f"history_{bot_key}.csv",
+        "log": f"trades_{bot_key}.log",
+    }
+
 
 # --- Paper trading ---
 STARTING_BALANCE_GBP = 100.0
-LEDGER_FILE = "ledger.json"
-LOG_FILE = "trades.log"
-HISTORY_FILE = "history.csv"    # per-check price/portfolio snapshots, for the dashboard
 
 # Kraken's standard taker fee at the lowest 30-day volume tier is 0.26% as of
 # writing - this bot trades on signals (effectively a market order), so taker
@@ -23,8 +56,9 @@ HISTORY_FILE = "history.csv"    # per-check price/portfolio snapshots, for the d
 # and update this if you want the simulation to stay accurate.
 TRADING_FEE_PCT = 0.0026
 
-# --- Loop timing ---
-CHECK_INTERVAL_SECONDS = 300    # how often the bot checks the market (5 min)
+# --- Loop timing (local/manual continuous runs only - GitHub Actions uses
+# --once and its own per-bot cron schedule instead) ---
+CHECK_INTERVAL_SECONDS = 300
 
 # --- Safety switch ---
 # This MUST stay True until you have read README.md's "Going live" section,
