@@ -147,6 +147,35 @@ const BOTS = [
 ];
 const STARTING_BALANCE = 100.0;
 
+// UK Capital Gains Tax assumptions - mirrors config.py's CGT_ANNUAL_EXEMPT_AMOUNT_GBP
+// and CGT_RATE. Illustrative only, not tax advice - see uk_tax.py for what
+// this does and doesn't model. Update both together if you change one.
+const CGT_ANNUAL_EXEMPT_AMOUNT = 3000.0;
+const CGT_RATE = 0.24; // higher/additional-rate assumption - set to 0.18 if you're basic-rate
+
+function currentUkTaxYear() {
+  const now = new Date();
+  const y = now.getUTCFullYear();
+  const isAfterApril6 = (now.getUTCMonth() > 3) || (now.getUTCMonth() === 3 && now.getUTCDate() >= 6);
+  const startYear = isAfterApril6 ? y : y - 1;
+  return `${startYear}/${String(startYear + 1).slice(-2)}`;
+}
+
+function estimateTax(gainsByYear, exemptAmount, rate) {
+  const result = {};
+  let totalGain = 0, totalTax = 0;
+  Object.keys(gainsByYear).sort().forEach(year => {
+    const gain = gainsByYear[year];
+    const taxable = Math.max(0, gain - exemptAmount);
+    const tax = taxable * rate;
+    result[year] = { gain, taxable, tax };
+    totalGain += gain;
+    totalTax += tax;
+  });
+  result._total = { gain: totalGain, tax: totalTax };
+  return result;
+}
+
 function parseCSV(text) {
   const lines = text.trim().split(/\r\n|\r|\n/);
   const headers = lines[0].split(",").map(h => h.trim());
@@ -315,10 +344,16 @@ function renderCompareCards(botsData) {
   }).join("");
 }
 
-function renderCards(containerId, latest, feesPaid) {
+function renderCards(containerId, latest, feesPaid, gainsByYear) {
   const pnl = latest.total_value_gbp - STARTING_BALANCE;
   const pnlClass = pnl >= 0 ? "up" : "down";
   const pnlSign = pnl >= 0 ? "+" : "";
+
+  const taxReport = estimateTax(gainsByYear || {}, CGT_ANNUAL_EXEMPT_AMOUNT, CGT_RATE);
+  const thisYear = currentUkTaxYear();
+  const thisYearTax = taxReport[thisYear];
+  const afterTaxValue = latest.total_value_gbp - taxReport._total.tax;
+
   document.getElementById(containerId).innerHTML = `
     <div class="card"><div class="label">Portfolio value</div><div class="value">${fmtGBP(latest.total_value_gbp)}</div>
       <div class="delta ${pnlClass}">${pnlSign}${fmtGBP(pnl)} after fees</div></div>
@@ -326,6 +361,9 @@ function renderCards(containerId, latest, feesPaid) {
     <div class="card"><div class="label">Coin holdings</div><div class="value">${Number(latest.coin_holdings).toFixed(6)}</div></div>
     <div class="card"><div class="label">Last price</div><div class="value">${fmtGBP(latest.price_gbp)}</div></div>
     <div class="card"><div class="label">Fees paid</div><div class="value">${fmtGBP(feesPaid)}</div></div>
+    <div class="card"><div class="label">Est. UK CGT owed (${thisYear})</div><div class="value">${fmtGBP(thisYearTax ? thisYearTax.tax : 0)}</div>
+      <div class="delta">on ${fmtGBP(thisYearTax ? thisYearTax.gain : 0)} realised gain</div></div>
+    <div class="card"><div class="label">Est. value after tax</div><div class="value">${fmtGBP(afterTaxValue)}</div></div>
   `;
 }
 
@@ -342,12 +380,13 @@ function renderTrades(containerId, trades) {
       <td>${fmtGBP(t.price_gbp)}</td>
       <td>${Number(t.coin_amount).toFixed(6)}</td>
       <td>${fmtGBP(t.fee_gbp || 0)}</td>
+      <td>${t.capital_gain_gbp !== undefined && t.capital_gain_gbp !== null ? fmtGBP(t.capital_gain_gbp) : "—"}</td>
       <td>${fmtGBP(t.cash_after)}</td>
       <td>${Number(t.coin_holdings_after).toFixed(6)}</td>
     </tr>
   `).join("");
   el.innerHTML = `<table>
-    <thead><tr><th>Time</th><th>Action</th><th>Price</th><th>Coin amount</th><th>Fee</th><th>Cash after</th><th>Holdings after</th></tr></thead>
+    <thead><tr><th>Time</th><th>Action</th><th>Price</th><th>Coin amount</th><th>Fee</th><th>Capital gain</th><th>Cash after</th><th>Holdings after</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
 }
@@ -436,8 +475,9 @@ async function load() {
     const botsData = await Promise.all(BOTS.map(fetchBot));
     const anyData = botsData.some(b => b.history.length > 0);
 
-    document.getElementById("subtitle").textContent = anyData
-      ? "Simulated trading only — no real money involved. Fees modelled at Kraken's standard taker rate. Auto-refreshes every minute."
+    document.getElementById("subtitle").innerHTML = anyData
+      ? `Simulated trading only — no real money involved. Fees modelled at Kraken's standard taker rate. Auto-refreshes every minute.<br>
+         <strong>UK CGT figures are an illustrative estimate, not tax advice</strong> — assumes ${(CGT_RATE * 100).toFixed(0)}% rate and £${CGT_ANNUAL_EXEMPT_AMOUNT.toLocaleString()} annual allowance, applied per bot independently. See README for what this does and doesn't model.`
       : "No data yet — waiting for the bots' first scheduled checks.";
 
     renderCompareCards(botsData);
@@ -449,7 +489,7 @@ async function load() {
     botsData.forEach(b => {
       const latest = b.history[b.history.length - 1];
       if (!latest) return;
-      renderCards(`cards-${b.meta.key}`, latest, b.ledger.fees_paid_gbp || 0);
+      renderCards(`cards-${b.meta.key}`, latest, b.ledger.fees_paid_gbp || 0, b.ledger.realized_gains_by_tax_year);
       renderStrategyChart(`priceChart-${b.meta.key}`, b.history);
       renderChart(`valueChart-${b.meta.key}`, b.history.map(r => Number(r.total_value_gbp)), "var(--green)");
       renderTrades(`trades-${b.meta.key}`, b.ledger.trade_history);

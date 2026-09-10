@@ -66,6 +66,7 @@ python main.py --bot 1h --once    # single check and exit (what GitHub Actions u
 | `data_fetcher.py` | Pulls price data from Kraken's public (no-auth) API |
 | `strategy.py` | The moving-average crossover logic — swap this out to try other strategies |
 | `ledger.py` | Tracks a simulated balance, holdings, and trade history |
+| `uk_tax.py` | Illustrative UK Capital Gains Tax estimate on realised gains (not tax advice) |
 | `main.py` | Runs one bot's check (`--bot <key> --once`) or loops forever |
 | `backtest.py` | Tests the strategy against real historical prices instead of guessing at settings |
 | `index.html` | Static dashboard, served by GitHub Pages, comparing all three bots |
@@ -107,6 +108,37 @@ choppy 3-day window can be the best performer over 2 years, and vice
 versa. The one thing that holds up consistently across every window
 tested: trading less often reliably means paying less in fees. That's
 arithmetic, not a market call.
+
+## UK tax (illustrative, not advice)
+
+**This is not tax advice.** `uk_tax.py` models UK Capital Gains Tax as an
+estimate so you can see roughly what HMRC would take from a strategy's
+gains - not a number to file a return from. Every disposal (sell) is
+matched against the buy it closes out, the gain is `net sale proceeds -
+original cost`, and gains/losses are netted per UK tax year (6 April - 5
+April) against `config.CGT_ANNUAL_EXEMPT_AMOUNT_GBP` and taxed at
+`config.CGT_RATE`.
+
+What this deliberately doesn't cover - read `uk_tax.py`'s docstring for
+the full list, but the headlines:
+- **Assumes CGT, not Income Tax.** HMRC can classify very frequent,
+  organised trading as Income Tax instead - exactly the kind of pattern an
+  automated bot produces. This model doesn't attempt that classification.
+- **No share-pooling/bed-and-breakfast rules.** Not needed here specifically
+  *because* each bot only ever holds 100% cash or 100% coin, never a
+  partial position - a strategy with partial buys/sells would need HMRC's
+  full same-day/30-day matching rules, which aren't implemented.
+- **No loss carry-forward** between tax years.
+- **Rate and allowance are your own assumptions**, not something the bot
+  can determine - it doesn't know your income, tax band, or other capital
+  gains. Verify current figures at gov.uk before trusting them; both
+  change most tax years.
+- **Each bot's allowance is modelled independently** - combine their gains
+  yourself if you want the "one real allowance across everything" picture.
+
+The dashboard shows an estimated tax owed and an "after tax" portfolio
+value per bot, both computed from these assumptions and clearly labelled
+as illustrative.
 
 ## Fee assumptions
 

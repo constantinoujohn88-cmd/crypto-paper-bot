@@ -7,6 +7,8 @@ import json
 import os
 from datetime import datetime, timezone
 
+import uk_tax
+
 
 def load_ledger(path: str, starting_balance: float) -> dict:
     if os.path.exists(path):
@@ -16,6 +18,7 @@ def load_ledger(path: str, starting_balance: float) -> dict:
         "cash_gbp": starting_balance,
         "coin_holdings": 0.0,
         "fees_paid_gbp": 0.0,
+        "realized_gains_by_tax_year": {},
         "trade_history": [],
     }
 
@@ -61,7 +64,14 @@ def execute_paper_buy(ledger: dict, price: float, fee_pct: float = 0.0) -> dict 
 
 def execute_paper_sell(ledger: dict, price: float, fee_pct: float = 0.0) -> dict | None:
     """Sells all held coin at the given price, minus a trading fee taken out
-    of the proceeds. Returns the trade record, or None if no holdings."""
+    of the proceeds. Returns the trade record, or None if no holdings.
+
+    Since a bot here is always either fully in cash or fully in coin (never
+    a partial position, never buying again before selling what it holds),
+    this sell always closes out exactly the preceding buy - so the UK
+    capital gain for this round trip is just (net sale proceeds) minus
+    (that buy's total cost, which already included its own fee). See
+    uk_tax.py for what this is modelling and its simplifications."""
     if ledger["coin_holdings"] <= 0:
         return None
 
@@ -74,8 +84,19 @@ def execute_paper_sell(ledger: dict, price: float, fee_pct: float = 0.0) -> dict
     ledger["cash_gbp"] += net_proceeds
     ledger["fees_paid_gbp"] = ledger.get("fees_paid_gbp", 0.0) + fee
 
+    timestamp = _timestamp()
+    matching_buy = next(
+        (t for t in reversed(ledger["trade_history"]) if t["action"] == "buy"), None
+    )
+    capital_gain = net_proceeds - matching_buy["cash_spent_gbp"] if matching_buy else None
+    tax_year = uk_tax.uk_tax_year(timestamp)
+
+    if capital_gain is not None:
+        gains_by_year = ledger.setdefault("realized_gains_by_tax_year", {})
+        gains_by_year[tax_year] = gains_by_year.get(tax_year, 0.0) + capital_gain
+
     trade = {
-        "timestamp": _timestamp(),
+        "timestamp": timestamp,
         "action": "sell",
         "price_gbp": price,
         "coin_amount": coin_sold,
@@ -83,6 +104,8 @@ def execute_paper_sell(ledger: dict, price: float, fee_pct: float = 0.0) -> dict
         "fee_gbp": fee,
         "cash_after": ledger["cash_gbp"],
         "coin_holdings_after": ledger["coin_holdings"],
+        "capital_gain_gbp": capital_gain,
+        "tax_year": tax_year,
     }
     ledger["trade_history"].append(trade)
     return trade

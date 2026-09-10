@@ -56,6 +56,23 @@ STARTING_BALANCE_GBP = 100.0
 # and update this if you want the simulation to stay accurate.
 TRADING_FEE_PCT = 0.0026
 
+# --- UK Capital Gains Tax assumptions (see uk_tax.py for what this does and
+# does NOT model - it's an illustrative estimate, not tax advice) ---
+# Annual tax-free allowance for capital gains, 2024/25 tax year onward.
+# This has been cut sharply in recent years (£12,300 -> £6,000 -> £3,000)
+# and could change again in a future Budget - verify the current figure at
+# https://www.gov.uk/capital-gains-tax/allowances before trusting this.
+CGT_ANNUAL_EXEMPT_AMOUNT_GBP = 3000.0
+
+# CGT rate on gains from assets other than residential property, since the
+# rate rise on 30 October 2024: 18% for basic-rate taxpayers, 24% for
+# higher/additional-rate taxpayers. Which one applies depends on YOUR total
+# taxable income for the year (this bot has no way to know that) - set this
+# to whichever band actually applies to you. Defaulted to the higher rate
+# here as a stated assumption, not a calculation - confirm your own band
+# at https://www.gov.uk/capital-gains-tax/rates.
+CGT_RATE = 0.24
+
 # --- Loop timing (local/manual continuous runs only - GitHub Actions uses
 # --once and its own per-bot cron schedule instead) ---
 CHECK_INTERVAL_SECONDS = 300
