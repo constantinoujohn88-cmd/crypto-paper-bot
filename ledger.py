@@ -18,6 +18,8 @@ def load_ledger(path: str, starting_balance: float) -> dict:
         "cash_gbp": starting_balance,
         "coin_holdings": 0.0,
         "fees_paid_gbp": 0.0,
+        "cumulative_gross_proceeds_gbp": 0.0,
+        "cumulative_net_gain_gbp": 0.0,
         "realized_gains_by_tax_year": {},
         "trade_history": [],
     }
@@ -91,7 +93,15 @@ def execute_paper_sell(ledger: dict, price: float, fee_pct: float = 0.0) -> dict
     capital_gain = net_proceeds - matching_buy["cash_spent_gbp"] if matching_buy else None
     tax_year = uk_tax.uk_tax_year(timestamp)
 
+    # Running totals so you can watch these accumulate trade-by-trade instead
+    # of re-deriving them from trade_history later. "Gross proceeds" is the
+    # sale value before the sell-side fee - the figure most tax tools/HMRC
+    # worksheets want as the disposal value; "net gain" is the actual
+    # profit/loss after both buy- and sell-side costs (same total you'd get
+    # summing realized_gains_by_tax_year, just always at hand as one number).
+    ledger["cumulative_gross_proceeds_gbp"] = ledger.get("cumulative_gross_proceeds_gbp", 0.0) + gross_proceeds
     if capital_gain is not None:
+        ledger["cumulative_net_gain_gbp"] = ledger.get("cumulative_net_gain_gbp", 0.0) + capital_gain
         gains_by_year = ledger.setdefault("realized_gains_by_tax_year", {})
         gains_by_year[tax_year] = gains_by_year.get(tax_year, 0.0) + capital_gain
 

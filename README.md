@@ -68,6 +68,7 @@ python main.py --bot 1h --once    # single check and exit (what GitHub Actions u
 | `ledger.py` | Tracks a simulated balance, holdings, and trade history |
 | `uk_tax.py` | Illustrative UK Capital Gains Tax estimate on realised gains (not tax advice) |
 | `main.py` | Runs one bot's check (`--bot <key> --once`) or loops forever |
+| `export_tax_csv.py` | Exports a bot's trades as a CSV formatted for a tax tool/accountant |
 | `backtest.py` | Tests the strategy against real historical prices instead of guessing at settings |
 | `index.html` | Static dashboard, served by GitHub Pages, comparing all three bots |
 | `.github/workflows/paper-trade-*.yml` | Scheduled Actions workflows, one per bot, on that bot's own cadence |
@@ -138,7 +139,26 @@ the full list, but the headlines:
 
 The dashboard shows an estimated tax owed and an "after tax" portfolio
 value per bot, both computed from these assumptions and clearly labelled
-as illustrative.
+as illustrative. It also shows two running totals that update with every
+trade, straight from the ledger rather than needing to be worked out by
+hand afterwards: **gross disposal proceeds** (total sale value across all
+sells, before the sell-side fee - the figure most tax worksheets ask for)
+and **net realised gain** (actual profit/loss after both buy- and
+sell-side costs, summed across every tax year).
+
+### Exporting for a tax tool or accountant
+
+```bash
+python export_tax_csv.py --bot 5m    # one bot  -> tax_export_5m.csv
+python export_tax_csv.py --bot all   # all bots, combined and time-sorted -> tax_export.csv
+```
+
+Produces a CSV with `timestamp, action, amount, price_gbp, fee_gbp` plus
+the gross/net value and capital gain per disposal already computed - the
+part that's normally the tedious bit when starting from a raw exchange
+export. Column names are generic rather than matching one specific tool's
+import template; you may need to rename/remap columns for whichever tool
+you actually use.
 
 ## Fee assumptions
 

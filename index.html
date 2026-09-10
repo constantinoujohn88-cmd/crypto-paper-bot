@@ -57,8 +57,8 @@
   .card .label { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
   .card .value { font-size: 1.4rem; font-weight: 600; margin-top: 4px; }
   .card .delta { font-size: 0.85rem; margin-top: 2px; }
-  .delta.up { color: var(--green); }
-  .delta.down { color: var(--red); }
+  .delta.up, .value.up { color: var(--green); }
+  .delta.down, .value.down { color: var(--red); }
   .panel {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -344,15 +344,17 @@ function renderCompareCards(botsData) {
   }).join("");
 }
 
-function renderCards(containerId, latest, feesPaid, gainsByYear) {
+function renderCards(containerId, latest, ledger) {
   const pnl = latest.total_value_gbp - STARTING_BALANCE;
   const pnlClass = pnl >= 0 ? "up" : "down";
   const pnlSign = pnl >= 0 ? "+" : "";
 
-  const taxReport = estimateTax(gainsByYear || {}, CGT_ANNUAL_EXEMPT_AMOUNT, CGT_RATE);
+  const taxReport = estimateTax(ledger.realized_gains_by_tax_year || {}, CGT_ANNUAL_EXEMPT_AMOUNT, CGT_RATE);
   const thisYear = currentUkTaxYear();
   const thisYearTax = taxReport[thisYear];
   const afterTaxValue = latest.total_value_gbp - taxReport._total.tax;
+  const netGain = ledger.cumulative_net_gain_gbp || 0;
+  const netGainClass = netGain >= 0 ? "up" : "down";
 
   document.getElementById(containerId).innerHTML = `
     <div class="card"><div class="label">Portfolio value</div><div class="value">${fmtGBP(latest.total_value_gbp)}</div>
@@ -360,7 +362,11 @@ function renderCards(containerId, latest, feesPaid, gainsByYear) {
     <div class="card"><div class="label">Cash</div><div class="value">${fmtGBP(latest.cash_gbp)}</div></div>
     <div class="card"><div class="label">Coin holdings</div><div class="value">${Number(latest.coin_holdings).toFixed(6)}</div></div>
     <div class="card"><div class="label">Last price</div><div class="value">${fmtGBP(latest.price_gbp)}</div></div>
-    <div class="card"><div class="label">Fees paid</div><div class="value">${fmtGBP(feesPaid)}</div></div>
+    <div class="card"><div class="label">Fees paid</div><div class="value">${fmtGBP(ledger.fees_paid_gbp || 0)}</div></div>
+    <div class="card"><div class="label">Gross disposal proceeds</div><div class="value">${fmtGBP(ledger.cumulative_gross_proceeds_gbp || 0)}</div>
+      <div class="delta">running total across all sells</div></div>
+    <div class="card"><div class="label">Net realised gain</div><div class="value ${netGainClass}">${fmtGBP(netGain)}</div>
+      <div class="delta">running total, all tax years</div></div>
     <div class="card"><div class="label">Est. UK CGT owed (${thisYear})</div><div class="value">${fmtGBP(thisYearTax ? thisYearTax.tax : 0)}</div>
       <div class="delta">on ${fmtGBP(thisYearTax ? thisYearTax.gain : 0)} realised gain</div></div>
     <div class="card"><div class="label">Est. value after tax</div><div class="value">${fmtGBP(afterTaxValue)}</div></div>
@@ -489,7 +495,7 @@ async function load() {
     botsData.forEach(b => {
       const latest = b.history[b.history.length - 1];
       if (!latest) return;
-      renderCards(`cards-${b.meta.key}`, latest, b.ledger.fees_paid_gbp || 0, b.ledger.realized_gains_by_tax_year);
+      renderCards(`cards-${b.meta.key}`, latest, b.ledger);
       renderStrategyChart(`priceChart-${b.meta.key}`, b.history);
       renderChart(`valueChart-${b.meta.key}`, b.history.map(r => Number(r.total_value_gbp)), "var(--green)");
       renderTrades(`trades-${b.meta.key}`, b.ledger.trade_history);
