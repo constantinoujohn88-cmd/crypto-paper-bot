@@ -149,17 +149,22 @@ sell-side costs, summed across every tax year).
 
 ### Exporting for a tax tool or accountant
 
+The dashboard itself has "Export CSV" buttons - one per bot (in that bot's
+Trade History panel) and one for all three bots combined (top of the
+Compare cadences section) - that download directly from your browser, no
+Python needed. Or run it locally for the same file:
+
 ```bash
 python export_tax_csv.py --bot 5m    # one bot  -> tax_export_5m.csv
 python export_tax_csv.py --bot all   # all bots, combined and time-sorted -> tax_export.csv
 ```
 
-Produces a CSV with `timestamp, action, amount, price_gbp, fee_gbp` plus
-the gross/net value and capital gain per disposal already computed - the
-part that's normally the tedious bit when starting from a raw exchange
-export. Column names are generic rather than matching one specific tool's
-import template; you may need to rename/remap columns for whichever tool
-you actually use.
+Both produce identical output: a CSV with `timestamp, action, amount,
+price_gbp, fee_gbp` plus the gross/net value and capital gain per disposal
+already computed - the part that's normally the tedious bit when starting
+from a raw exchange export. Column names are generic rather than matching
+one specific tool's import template; you may need to rename/remap columns
+for whichever tool you actually use.
 
 ### Reconciling against Kraken (for if you ever go live)
 

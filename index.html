@@ -112,6 +112,21 @@
   .tab-btn .dot { width: 9px; height: 9px; border-radius: 50%; }
   .tab-btn.active { border-color: var(--dot-color, var(--accent)); font-weight: 600; }
   .bot-panel[hidden] { display: none; }
+
+  .export-btn {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 7px 13px;
+    font-size: 0.82rem;
+    cursor: pointer;
+  }
+  .export-btn:hover { border-color: var(--accent); }
+  .export-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .export-row { display: flex; justify-content: flex-end; margin-bottom: 10px; gap: 8px; }
+  .panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .panel-head h3 { margin: 0; }
 </style>
 </head>
 <body>
@@ -121,6 +136,10 @@
 
   <h2 class="section">Compare cadences</h2>
   <p class="section-sub">Three bots, identical strategy and periods (12/26 moving average crossover), each with its own independent £100 and its own trades. The <em>only</em> difference between them is how often they check the market and how big a candle they react to — this is a controlled test of whether trading frequency alone changes the outcome.</p>
+
+  <div class="export-row">
+    <button class="export-btn" id="exportAllBtn">Export all trades (CSV)</button>
+  </div>
 
   <div class="cards" id="compareCards"></div>
 
@@ -146,6 +165,7 @@ const BOTS = [
   { key: "1d", label: "Daily candles",    color: "var(--bot-1d)", cssVar: "--bot-1d" },
 ];
 const STARTING_BALANCE = 100.0;
+let latestBotsData = []; // updated by load(), read by the export button handlers
 
 // UK Capital Gains Tax assumptions - mirrors config.py's CGT_ANNUAL_EXEMPT_AMOUNT_GBP
 // and CGT_RATE. Illustrative only, not tax advice - see uk_tax.py for what
@@ -373,6 +393,83 @@ function renderCards(containerId, latest, ledger) {
   `;
 }
 
+// Mirrors export_tax_csv.py's column set and per-trade logic exactly, so
+// the button on this page and the local script produce the same shape of
+// file - keep both in sync if either changes.
+const CSV_FIELDNAMES = [
+  "bot", "timestamp", "tax_year", "action", "asset",
+  "amount", "price_gbp", "gross_value_gbp", "fee_gbp",
+  "net_value_gbp", "capital_gain_gbp",
+];
+
+function tradeToCSVRow(botKey, t) {
+  const amount = t.coin_amount;
+  const price = t.price_gbp;
+  const grossValue = amount * price;
+  const fee = t.fee_gbp || 0;
+  const netValue = t.action === "buy" ? t.cash_spent_gbp : t.cash_received_gbp;
+  return {
+    bot: botKey,
+    timestamp: t.timestamp,
+    tax_year: t.tax_year || "",
+    action: t.action,
+    asset: "XBT",
+    amount, price_gbp: price,
+    gross_value_gbp: grossValue,
+    fee_gbp: fee,
+    net_value_gbp: netValue,
+    capital_gain_gbp: t.capital_gain_gbp ?? "",
+  };
+}
+
+function csvEscape(value) {
+  const s = String(value);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function rowsToCSV(rows) {
+  const lines = [CSV_FIELDNAMES.join(",")];
+  rows.forEach(row => {
+    lines.push(CSV_FIELDNAMES.map(f => csvEscape(row[f])).join(","));
+  });
+  return lines.join("\n");
+}
+
+function downloadCSV(filename, csvText) {
+  const blob = new Blob([csvText], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function exportBotCSV(botKey, botsData) {
+  const bot = botsData.find(b => b.meta.key === botKey);
+  const trades = (bot?.ledger.trade_history || []);
+  if (trades.length === 0) {
+    alert(`No trades yet for the ${bot.meta.label} bot - nothing to export.`);
+    return;
+  }
+  const rows = trades.map(t => tradeToCSVRow(botKey, t));
+  downloadCSV(`tax_export_${botKey}.csv`, rowsToCSV(rows));
+}
+
+function exportAllCSV(botsData) {
+  const rows = botsData.flatMap(b =>
+    (b.ledger.trade_history || []).map(t => tradeToCSVRow(b.meta.key, t))
+  );
+  if (rows.length === 0) {
+    alert("No trades yet on any bot - nothing to export.");
+    return;
+  }
+  rows.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  downloadCSV("tax_export.csv", rowsToCSV(rows));
+}
+
 function renderTrades(containerId, trades) {
   const el = document.getElementById(containerId);
   if (!trades || trades.length === 0) {
@@ -445,7 +542,10 @@ function buildBotPanelsSkeleton() {
         <div class="legend"><span class="value">Total value (£), started at £100</span></div>
       </div>
       <div class="panel">
-        <h3>Trade history</h3>
+        <div class="panel-head">
+          <h3>Trade history</h3>
+          <button class="export-btn" id="exportBtn-${b.key}">Export CSV</button>
+        </div>
         <div class="table-scroll" id="trades-${b.key}"></div>
       </div>
       <div class="panel">
@@ -464,6 +564,15 @@ function buildBotPanelsSkeleton() {
       });
     });
   });
+
+  BOTS.forEach(b => {
+    document.getElementById(`exportBtn-${b.key}`).addEventListener("click", () => {
+      exportBotCSV(b.key, latestBotsData);
+    });
+  });
+  document.getElementById("exportAllBtn").addEventListener("click", () => {
+    exportAllCSV(latestBotsData);
+  });
 }
 
 async function fetchBot(bot) {
@@ -479,6 +588,7 @@ async function fetchBot(bot) {
 async function load() {
   try {
     const botsData = await Promise.all(BOTS.map(fetchBot));
+    latestBotsData = botsData;
     const anyData = botsData.some(b => b.history.length > 0);
 
     document.getElementById("subtitle").innerHTML = anyData
