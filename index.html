@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crypto Paper Trading Bot</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0e1117;
+    --panel: #161b22;
+    --border: #2a2f3a;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f8fa;
+      --panel: #ffffff;
+      --border: #d0d7de;
+      --text: #1f2328;
+      --muted: #57606a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    padding: 24px 20px 60px;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  .subtitle { color: var(--muted); font-size: 0.9rem; margin-bottom: 24px; }
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin-bottom: 28px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .card .label { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  .card .value { font-size: 1.4rem; font-weight: 600; margin-top: 4px; }
+  .card .delta { font-size: 0.85rem; margin-top: 2px; }
+  .delta.up { color: var(--green); }
+  .delta.down { color: var(--red); }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin-bottom: 22px;
+  }
+  .panel h2 { font-size: 1.05rem; margin: 0 0 12px; }
+  svg { width: 100%; height: auto; display: block; }
+  .legend { display: flex; gap: 16px; margin-top: 8px; font-size: 0.82rem; color: var(--muted); }
+  .legend span::before {
+    content: "";
+    display: inline-block;
+    width: 10px; height: 10px;
+    border-radius: 2px;
+    margin-right: 5px;
+    position: relative; top: 1px;
+  }
+  .legend .price::before { background: var(--accent); }
+  .legend .value::before { background: var(--green); }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; font-size: 0.78rem; text-transform: uppercase; }
+  tr:last-child td { border-bottom: none; }
+  .buy { color: var(--green); font-weight: 600; }
+  .sell { color: var(--red); font-weight: 600; }
+  .empty { color: var(--muted); font-style: italic; padding: 8px 0; }
+  .table-scroll { overflow-x: auto; }
+  footer { color: var(--muted); font-size: 0.8rem; text-align: center; margin-top: 30px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Crypto Paper Trading Bot</h1>
+  <div class="subtitle" id="subtitle">Simulated trading only — no real money involved. Loading…</div>
+
+  <div class="cards" id="cards"></div>
+
+  <div class="panel">
+    <h2>BTC price</h2>
+    <svg id="priceChart" viewBox="0 0 860 180" preserveAspectRatio="none"></svg>
+    <div class="legend"><span class="price">GBP per BTC</span></div>
+  </div>
+
+  <div class="panel">
+    <h2>Portfolio value</h2>
+    <svg id="valueChart" viewBox="0 0 860 180" preserveAspectRatio="none"></svg>
+    <div class="legend"><span class="value">Total value (£), started at £100</span></div>
+  </div>
+
+  <div class="panel">
+    <h2>Trade history</h2>
+    <div class="table-scroll" id="trades"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Recent checks</h2>
+    <div class="table-scroll" id="checks"></div>
+  </div>
+
+  <footer id="footer"></footer>
+</div>
+
+<script>
+const REFRESH_MS = 60000;
+
+function parseCSV(text) {
+  const lines = text.trim().split(/\r\n|\r|\n/);
+  const headers = lines[0].split(",").map(h => h.trim());
+  return lines.slice(1).map(line => {
+    const cells = line.split(",").map(c => c.trim());
+    const row = {};
+    headers.forEach((h, i) => row[h] = cells[i]);
+    return row;
+  });
+}
+
+function fmtGBP(n) {
+  return "£" + Number(n).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function buildPath(values, w, h, pad) {
+  if (values.length === 0) return "";
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = (max - min) || 1;
+  const stepX = values.length > 1 ? (w - pad * 2) / (values.length - 1) : 0;
+  return values.map((v, i) => {
+    const x = pad + i * stepX;
+    const y = h - pad - ((v - min) / range) * (h - pad * 2);
+    return (i === 0 ? "M" : "L") + x.toFixed(1) + "," + y.toFixed(1);
+  }).join(" ");
+}
+
+function renderChart(svgId, values, color) {
+  const svg = document.getElementById(svgId);
+  const w = 860, h = 180, pad = 10;
+  const path = buildPath(values, w, h, pad);
+  svg.innerHTML = path
+    ? `<path d="${path}" fill="none" stroke="${color}" stroke-width="2.5" vector-effect="non-scaling-stroke"/>`
+    : `<text x="50%" y="50%" fill="var(--muted)" text-anchor="middle" font-size="14">No data yet</text>`;
+}
+
+function renderCards(latest, startBalance, feesPaid) {
+  const pnl = latest.total_value_gbp - startBalance;
+  const pnlClass = pnl >= 0 ? "up" : "down";
+  const pnlSign = pnl >= 0 ? "+" : "";
+  document.getElementById("cards").innerHTML = `
+    <div class="card"><div class="label">Portfolio value</div><div class="value">${fmtGBP(latest.total_value_gbp)}</div>
+      <div class="delta ${pnlClass}">${pnlSign}${fmtGBP(pnl)} after fees</div></div>
+    <div class="card"><div class="label">Cash</div><div class="value">${fmtGBP(latest.cash_gbp)}</div></div>
+    <div class="card"><div class="label">Coin holdings</div><div class="value">${Number(latest.coin_holdings).toFixed(6)}</div></div>
+    <div class="card"><div class="label">Last price</div><div class="value">${fmtGBP(latest.price_gbp)}</div></div>
+    <div class="card"><div class="label">Fees paid</div><div class="value">${fmtGBP(feesPaid)}</div></div>
+  `;
+}
+
+function renderTrades(trades) {
+  const el = document.getElementById("trades");
+  if (!trades || trades.length === 0) {
+    el.innerHTML = `<div class="empty">No trades yet — the strategy hasn't seen a crossover.</div>`;
+    return;
+  }
+  const rows = [...trades].reverse().map(t => `
+    <tr>
+      <td>${new Date(t.timestamp).toLocaleString()}</td>
+      <td class="${t.action}">${t.action.toUpperCase()}</td>
+      <td>${fmtGBP(t.price_gbp)}</td>
+      <td>${Number(t.coin_amount).toFixed(6)}</td>
+      <td>${fmtGBP(t.fee_gbp || 0)}</td>
+      <td>${fmtGBP(t.cash_after)}</td>
+      <td>${Number(t.coin_holdings_after).toFixed(6)}</td>
+    </tr>
+  `).join("");
+  el.innerHTML = `<table>
+    <thead><tr><th>Time</th><th>Action</th><th>Price</th><th>Coin amount</th><th>Fee</th><th>Cash after</th><th>Holdings after</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function renderChecks(history) {
+  const el = document.getElementById("checks");
+  const recent = [...history].reverse().slice(0, 50);
+  const rows = recent.map(r => `
+    <tr>
+      <td>${new Date(r.timestamp).toLocaleString()}</td>
+      <td>${fmtGBP(r.price_gbp)}</td>
+      <td>${r.signal}</td>
+      <td>${fmtGBP(r.cash_gbp)}</td>
+      <td>${Number(r.coin_holdings).toFixed(6)}</td>
+      <td>${fmtGBP(r.total_value_gbp)}</td>
+    </tr>
+  `).join("");
+  el.innerHTML = `<table>
+    <thead><tr><th>Time</th><th>Price</th><th>Signal</th><th>Cash</th><th>Holdings</th><th>Total value</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+async function load() {
+  try {
+    const [historyRes, ledgerRes] = await Promise.all([
+      fetch("history.csv?_=" + Date.now()),
+      fetch("ledger.json?_=" + Date.now()),
+    ]);
+
+    if (!historyRes.ok) {
+      document.getElementById("subtitle").textContent =
+        "No data yet — waiting for the bot's first scheduled check.";
+      return;
+    }
+
+    const history = parseCSV(await historyRes.text());
+    const ledger = ledgerRes.ok ? await ledgerRes.json() : { trade_history: [], fees_paid_gbp: 0 };
+    const latest = history[history.length - 1];
+
+    document.getElementById("subtitle").textContent =
+      "Simulated trading only — no real money involved. Fees modelled at Kraken's standard taker rate. Auto-refreshes every minute.";
+
+    renderCards(latest, 100.0, ledger.fees_paid_gbp || 0);
+    renderChart("priceChart", history.map(r => Number(r.price_gbp)), "var(--accent)");
+    renderChart("valueChart", history.map(r => Number(r.total_value_gbp)), "var(--green)");
+    renderTrades(ledger.trade_history);
+    renderChecks(history);
+
+    document.getElementById("footer").textContent =
+      "Last updated " + new Date().toLocaleTimeString() + " · " + history.length + " checks logged";
+  } catch (err) {
+    document.getElementById("subtitle").textContent = "Couldn't load data: " + err.message;
+  }
+}
+
+load();
+setInterval(load, REFRESH_MS);
+</script>
+</body>
+</html>
