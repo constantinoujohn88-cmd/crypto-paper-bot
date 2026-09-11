@@ -111,6 +111,37 @@ versa. The one thing that holds up consistently across every window
 tested: trading less often reliably means paying less in fees. That's
 arithmetic, not a market call.
 
+## Trailing stops (an early exit, on top of the crossover)
+
+The crossover sell can lag badly: a delayed check can mean the bot rides
+a position most of the way back down before the long-term average
+confirms a reversal. `config.BOTS[<key>]` optionally sets `trailing_stop_pct`:
+while holding coin, the bot tracks the highest price seen since the buy
+and sells immediately - independent of the crossover - if price falls
+back that %% from the peak. The original crossover sell is still there
+as a fallback for whenever the trailing stop doesn't fire.
+
+`trailing_stop_arm_pct` refines this further: the stop doesn't start
+watching for a pullback until price has first risen at least that %%
+above the *buy* price. Without it, a bad entry (bought right at a local
+spike, which - see the project's own history - has happened) gets
+stopped out for a small loss the moment it wobbles, with no chance to
+recover. With it, a bad entry is simply not protected yet (only the
+crossover sell can exit it) until it's actually shown a real gain worth
+protecting.
+
+Backtested before enabling anything (`backtest.py --trailing-stop N
+[--trailing-stop-arm N]`) - only the hourly bot has this turned on
+(1%/0.75% arm), because it's the only one where backtesting showed a
+result that improved *both* return and max drawdown over the tested
+window, not just one at the other's expense. The 5-minute and daily bots
+showed no similarly robust benefit on the data available at the time
+(one gave a result that looked good in isolation but fell apart under a
+proper sweep of nearby values - a reminder of exactly the overfitting
+risk this whole project keeps running into) - left disabled rather than
+guess, revisit once each has enough of its own live history to test
+against properly.
+
 ## UK tax (illustrative, not advice)
 
 **This is not tax advice.** `uk_tax.py` models UK Capital Gains Tax as an

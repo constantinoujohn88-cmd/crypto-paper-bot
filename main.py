@@ -66,6 +66,40 @@ def place_live_order(action: str, price: float):
     )
 
 
+def check_trailing_stop(ledger: dict, bot_cfg: dict, current_price: float) -> bool:
+    """Returns True if a trailing-stop sell fired this check. See
+    config.py's BOTS comment and backtest.py's run_backtest docstring for
+    what this does and why it's only enabled where backtesting actually
+    supported it. Independent of the crossover - this can sell even on a
+    check where the strategy signal is "hold"."""
+    trailing_stop_pct = bot_cfg.get("trailing_stop_pct")
+    if ledger["coin_holdings"] <= 0 or trailing_stop_pct is None:
+        return False
+
+    peak = ledger.get("peak_since_buy")
+    peak = current_price if peak is None else max(peak, current_price)
+    ledger["peak_since_buy"] = peak
+
+    arm_pct = bot_cfg.get("trailing_stop_arm_pct")
+    buy_price = ledger.get("buy_price_for_position")
+    armed = arm_pct is None or (
+        buy_price is not None and peak >= buy_price * (1 + arm_pct / 100)
+    )
+
+    if not armed or current_price > peak * (1 - trailing_stop_pct / 100):
+        return False
+
+    if config.PAPER_MODE:
+        trade = ledger_module.execute_paper_sell(ledger, current_price, config.TRADING_FEE_PCT)
+        if trade:
+            logging.info("Trailing stop triggered (peak £%.2f): %s", peak, trade)
+    else:
+        place_live_order("sell", current_price)
+    ledger["peak_since_buy"] = None
+    ledger["buy_price_for_position"] = None
+    return True
+
+
 def run_once(ledger: dict, bot_cfg: dict, files: dict) -> None:
     prices = data_fetcher.get_recent_closes(
         config.KRAKEN_PAIR, bot_cfg["interval_minutes"]
@@ -79,29 +113,39 @@ def run_once(ledger: dict, bot_cfg: dict, files: dict) -> None:
     )
     ledger["last_ma_relationship"] = current_relationship
 
-    logging.info(
-        "Price: £%.2f | Signal: %s | Cash: £%.2f | Holdings: %.6f coin",
-        current_price, signal, ledger["cash_gbp"], ledger["coin_holdings"],
-    )
-
+    logged_signal = signal
     trade = None
-    if signal == "buy":
-        if config.PAPER_MODE:
-            trade = ledger_module.execute_paper_buy(ledger, current_price, config.TRADING_FEE_PCT)
-        else:
-            place_live_order("buy", current_price)
-    elif signal == "sell":
-        if config.PAPER_MODE:
-            trade = ledger_module.execute_paper_sell(ledger, current_price, config.TRADING_FEE_PCT)
-        else:
-            place_live_order("sell", current_price)
 
-    if trade:
-        logging.info("Executed %s: %s", trade["action"].upper(), trade)
+    if check_trailing_stop(ledger, bot_cfg, current_price):
+        logged_signal = "sell"  # so the dashboard's chart marker/coloring shows this exit
+    else:
+        logging.info(
+            "Price: £%.2f | Signal: %s | Cash: £%.2f | Holdings: %.6f coin",
+            current_price, signal, ledger["cash_gbp"], ledger["coin_holdings"],
+        )
 
-    # Always persist, not just on a trade - last_ma_relationship has to
-    # survive to the next run (a fresh process each time under GitHub
-    # Actions) for crossover detection to work at all.
+        if signal == "buy":
+            if config.PAPER_MODE:
+                trade = ledger_module.execute_paper_buy(ledger, current_price, config.TRADING_FEE_PCT)
+                if ledger["coin_holdings"] > 0:
+                    ledger["peak_since_buy"] = current_price
+                    ledger["buy_price_for_position"] = current_price
+            else:
+                place_live_order("buy", current_price)
+        elif signal == "sell":
+            if config.PAPER_MODE:
+                trade = ledger_module.execute_paper_sell(ledger, current_price, config.TRADING_FEE_PCT)
+            else:
+                place_live_order("sell", current_price)
+            ledger["peak_since_buy"] = None
+            ledger["buy_price_for_position"] = None
+
+        if trade:
+            logging.info("Executed %s: %s", trade["action"].upper(), trade)
+
+    # Always persist, not just on a trade - last_ma_relationship (and the
+    # trailing-stop tracking fields) have to survive to the next run (a
+    # fresh process each time under GitHub Actions) to work at all.
     ledger_module.save_ledger(files["ledger"], ledger)
 
     total_value = ledger_module.total_value_gbp(ledger, current_price)
@@ -113,7 +157,7 @@ def run_once(ledger: dict, bot_cfg: dict, files: dict) -> None:
         "price_gbp": current_price,
         "short_ma": short_ma if short_ma is not None else "",
         "long_ma": long_ma if long_ma is not None else "",
-        "signal": signal,
+        "signal": logged_signal,
         "cash_gbp": ledger["cash_gbp"],
         "coin_holdings": ledger["coin_holdings"],
         "total_value_gbp": total_value,

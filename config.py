@@ -13,24 +13,45 @@ KRAKEN_PAIR = "XBTGBP"          # BTC/GBP on Kraken. See https://api.kraken.com/
 # evidence this matters: which period pair "wins" flips depending on the
 # window tested, but trading less often reliably means paying less in fees
 # regardless of regime.
+# trailing_stop_pct/trailing_stop_arm_pct (both optional, None = disabled):
+# while holding coin, sell immediately - independent of the crossover -
+# if price falls back trailing_stop_pct from its peak since the buy. If
+# trailing_stop_arm_pct is also set, the stop doesn't start watching until
+# price has first risen at least that %% above the BUY price, so a bad
+# entry (bought right at a local spike) gets room to recover instead of
+# being stopped out for a small loss the moment it wobbles.
+#
+# Backtested against real historical data before enabling anything here
+# (see backtest.py --trailing-stop/--trailing-stop-arm): the 1h values
+# below improved BOTH return and max drawdown over the 30-day window
+# tested, a genuinely low-regret result, not just a threshold that
+# happened to look good once. 5m and 1d showed no similarly robust
+# benefit on the data available at the time, so left disabled - revisit
+# once each bot's own live history is long enough to test against.
 BOTS = {
     "5m": {
         "label": "5-minute candles",
         "interval_minutes": 5,
         "short_period": 12,
         "long_period": 26,
+        "trailing_stop_pct": None,
+        "trailing_stop_arm_pct": None,
     },
     "1h": {
         "label": "Hourly candles",
         "interval_minutes": 60,
         "short_period": 12,
         "long_period": 26,
+        "trailing_stop_pct": 1.0,
+        "trailing_stop_arm_pct": 0.75,
     },
     "1d": {
         "label": "Daily candles",
         "interval_minutes": 1440,
         "short_period": 12,
         "long_period": 26,
+        "trailing_stop_pct": None,
+        "trailing_stop_arm_pct": None,
     },
 }
 DEFAULT_BOT = "5m"

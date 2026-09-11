@@ -52,12 +52,39 @@ def load_history_csv_prices(path: str) -> list[float]:
 
 
 def run_backtest(prices: list[float], short_period: int, long_period: int,
-                  fee_pct: float, starting_balance: float, common_start: int) -> dict:
+                  fee_pct: float, starting_balance: float, common_start: int,
+                  max_extension_pct: float | None = None,
+                  trailing_stop_pct: float | None = None,
+                  trailing_stop_arm_pct: float | None = None) -> dict:
     """common_start is a shared warm-up index (the same for every parameter
     set being compared) so the buy & hold benchmark is measured over
     identical price windows across rows - each strategy still only starts
     trading once IT has enough history, but the comparison baseline doesn't
-    silently shift with the period lengths being tested."""
+    silently shift with the period lengths being tested.
+
+    max_extension_pct is an EXPERIMENTAL filter, not used by the live bots:
+    when set, a buy/sell is skipped if the current price is already more
+    than this %% away from the short MA at that moment - the idea being to
+    avoid chasing a move that's already run far from its own recent average
+    by the time a delayed check notices the crossover (see the real
+    examples of this in the project's history). A skipped signal isn't
+    retried later - the relationship tracking moves on regardless, so this
+    specific crossover is simply forgone, for better or worse.
+
+    trailing_stop_pct is also EXPERIMENTAL and backtest-only: while holding
+    coin, tracks the highest price seen since the buy, and sells immediately
+    (independent of the crossover) if price falls back this %% from that
+    peak. The idea is to lock in a gain on the way down from a top rather
+    than waiting for the slower long-MA-based sell to confirm a reversal -
+    the risk is exiting a dip that was about to resume into a bigger move.
+
+    trailing_stop_arm_pct (also experimental) makes the trailing stop wait
+    until it has something worth protecting: it only starts watching for a
+    pullback once price has risen at least this %% above the BUY price
+    (not the peak). Before that, only the crossover sell can exit - a bad
+    entry (e.g. bought right at a local spike) gets room to recover instead
+    of being stopped out for a small loss the moment it wobbles. Ignored if
+    trailing_stop_pct isn't also set."""
     ledger = {
         "cash_gbp": starting_balance,
         "coin_holdings": 0.0,
@@ -66,6 +93,10 @@ def run_backtest(prices: list[float], short_period: int, long_period: int,
     }
     equity_curve = []
     prev_relationship = None
+    filtered_count = 0
+    trailing_stop_count = 0
+    peak_since_buy = None
+    buy_price = None
 
     for i in range(long_period, len(prices) + 1):
         window = prices[:i]
@@ -73,10 +104,36 @@ def run_backtest(prices: list[float], short_period: int, long_period: int,
         short_ma, long_ma = strategy.moving_averages(window, short_period, long_period)
         signal, prev_relationship = strategy.compute_signal(short_ma, long_ma, prev_relationship)
 
-        if signal == "buy":
+        if ledger["coin_holdings"] > 0 and trailing_stop_pct is not None:
+            peak_since_buy = price if peak_since_buy is None else max(peak_since_buy, price)
+            armed = (
+                trailing_stop_arm_pct is None
+                or peak_since_buy >= buy_price * (1 + trailing_stop_arm_pct / 100)
+            )
+            if armed and price <= peak_since_buy * (1 - trailing_stop_pct / 100):
+                ledger_module.execute_paper_sell(ledger, price, fee_pct)
+                trailing_stop_count += 1
+                peak_since_buy = None
+                buy_price = None
+                equity_curve.append(ledger["cash_gbp"] + ledger["coin_holdings"] * price)
+                continue
+
+        filtered = False
+        if signal in ("buy", "sell") and max_extension_pct is not None and short_ma:
+            extension_pct = abs(price - short_ma) / short_ma * 100
+            filtered = extension_pct > max_extension_pct
+
+        if filtered:
+            filtered_count += 1
+        elif signal == "buy":
             ledger_module.execute_paper_buy(ledger, price, fee_pct)
+            if ledger["coin_holdings"] > 0:
+                peak_since_buy = price
+                buy_price = price
         elif signal == "sell":
             ledger_module.execute_paper_sell(ledger, price, fee_pct)
+            peak_since_buy = None
+            buy_price = None
 
         equity_curve.append(ledger["cash_gbp"] + ledger["coin_holdings"] * price)
 
@@ -96,6 +153,8 @@ def run_backtest(prices: list[float], short_period: int, long_period: int,
         "short_period": short_period,
         "long_period": long_period,
         "trades": len(ledger["trade_history"]),
+        "filtered_count": filtered_count,
+        "trailing_stop_count": trailing_stop_count,
         "return_pct": (final_value / starting_balance - 1) * 100,
         "fees_paid_gbp": ledger["fees_paid_gbp"],
         "max_drawdown_pct": max_drawdown_pct,
@@ -114,6 +173,22 @@ def main():
                               "240, 1440, 10080, 21600), overriding --bot's own interval. "
                               "Kraken always caps a request at ~720 candles, so a bigger "
                               "interval buys a longer look-back at the cost of coarser signals.")
+    parser.add_argument("--max-extension", type=float, default=None,
+                         help="EXPERIMENTAL, backtest-only (not used by the live bots): "
+                              "skip a buy/sell if price is more than this %% away from the "
+                              "short MA at that moment. Prints both filtered and unfiltered "
+                              "results side by side for comparison when set.")
+    parser.add_argument("--trailing-stop", type=float, default=None,
+                         help="EXPERIMENTAL, backtest-only (not used by the live bots unless "
+                              "set in config.BOTS): while holding, sell immediately "
+                              "(independent of the crossover) if price falls back this %% "
+                              "from its peak since the buy, instead of waiting for the sell "
+                              "signal. Prints with and without for comparison when set.")
+    parser.add_argument("--trailing-stop-arm", type=float, default=None,
+                         help="Only meaningful with --trailing-stop: don't start watching "
+                              "for a pullback until price has first risen at least this %% "
+                              "above the buy price, so a bad entry gets room to recover "
+                              "instead of being stopped out immediately.")
     args = parser.parse_args()
 
     bot_cfg = config.BOTS[args.bot]
@@ -145,24 +220,55 @@ def main():
         h = period * interval / 60
         return f"{h/24:.1f}d" if h >= 48 else f"{h:.1f}h"
 
-    print(f"{'Short':>6} {'Long':>6} {'(real time)':>18} {'Trades':>7} {'Return %':>9} "
-          f"{'Fees £':>8} {'Max DD %':>9} {'Buy&Hold %':>11}")
-    for short_p, long_p in PARAM_SETS:
-        result = run_backtest(prices, short_p, long_p, config.TRADING_FEE_PCT,
-                               config.STARTING_BALANCE_GBP, common_start)
-        if result is None:
-            continue
-        marker = " <- this bot's config" if (short_p, long_p) == (bot_cfg["short_period"], bot_cfg["long_period"]) and interval == bot_cfg["interval_minutes"] else ""
-        real = f"({real_time(short_p)}/{real_time(long_p)})"
-        print(f"{result['short_period']:>6} {result['long_period']:>6} {real:>18} "
+    def print_row(result, label, marker=""):
+        real = f"({real_time(result['short_period'])}/{real_time(result['long_period'])})"
+        notes = []
+        if result["filtered_count"]:
+            notes.append(f"{result['filtered_count']} filtered")
+        if result["trailing_stop_count"]:
+            notes.append(f"{result['trailing_stop_count']} trailing-stopped")
+        note_str = f" [{', '.join(notes)}]" if notes else ""
+        print(f"{label:>16} {result['short_period']:>6} {result['long_period']:>6} {real:>18} "
               f"{result['trades']:>7} {result['return_pct']:>9.2f} "
               f"{result['fees_paid_gbp']:>8.2f} {result['max_drawdown_pct']:>9.2f} "
-              f"{result['buy_hold_return_pct']:>11.2f}{marker}")
+              f"{result['buy_hold_return_pct']:>11.2f}{marker}{note_str}")
+
+    variants = [("baseline", {})]
+    if args.max_extension is not None:
+        variants.append((f"ext<{args.max_extension:g}%", {"max_extension_pct": args.max_extension}))
+    if args.trailing_stop is not None:
+        trail_kwargs = {"trailing_stop_pct": args.trailing_stop}
+        trail_label = f"trail{args.trailing_stop:g}%"
+        if args.trailing_stop_arm is not None:
+            trail_kwargs["trailing_stop_arm_pct"] = args.trailing_stop_arm
+            trail_label += f"/arm{args.trailing_stop_arm:g}%"
+        variants.append((trail_label, trail_kwargs))
+    if args.max_extension is not None and args.trailing_stop is not None:
+        variants.append(("both", {**trail_kwargs, "max_extension_pct": args.max_extension}))
+
+    header_label = "Variant" if len(variants) > 1 else ""
+    print(f"{header_label:>16} {'Short':>6} {'Long':>6} {'(real time)':>18} {'Trades':>7} {'Return %':>9} "
+          f"{'Fees £':>8} {'Max DD %':>9} {'Buy&Hold %':>11}")
+    for short_p, long_p in PARAM_SETS:
+        marker = " <- this bot's config" if (short_p, long_p) == (bot_cfg["short_period"], bot_cfg["long_period"]) and interval == bot_cfg["interval_minutes"] else ""
+        for label, kwargs in variants:
+            result = run_backtest(prices, short_p, long_p, config.TRADING_FEE_PCT,
+                                   config.STARTING_BALANCE_GBP, common_start, **kwargs)
+            if result is None:
+                continue
+            print_row(result, label if len(variants) > 1 else "", marker)
 
     print("\nBuy&Hold % is the same for every row (same price window) - it's "
           "there as a sanity check, not something to beat with limited data. "
           "Treat all of this as directional, not conclusive: it's a short "
           "window, and past prices don't predict future ones.")
+    if len(variants) > 1:
+        print("\n--max-extension is experimental and backtest-only - not used by any live "
+              "bot. --trailing-stop IS used live for bots that have trailing_stop_pct set "
+              "in config.BOTS (currently: 1h) - check there for what's actually deployed, "
+              "this flag only lets you test other values here first. A trade shown as "
+              "filtered was skipped entirely (not retried); a trailing-stopped sell fired "
+              "early, independent of the crossover signal.")
 
 
 if __name__ == "__main__":
