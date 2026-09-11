@@ -36,12 +36,23 @@ files, git commands) happens inside that clone; the already-imported
 Python modules' *code* still comes from wherever Railway put it, which is
 fine since it's the same repo.
 
+Also serves the dashboard (index.html + the live ledger/history files)
+directly over HTTP from this same process, on Railway's PORT - reading
+straight from the working copy this process just wrote to, rather than
+the dashboard depending on git push + GitHub Pages rebuild finishing
+first. GitHub Pages keeps working too (this doesn't replace it, both read
+from the same underlying data - Pages from the repo, this from the live
+clone).
+
 Run with: python railway_worker.py
 """
+import functools
+import http.server
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -107,10 +118,23 @@ def check_one_bot(bot_key: str) -> None:
     commit_and_push(bot_key)
 
 
+def start_dashboard_server(directory: str) -> None:
+    """Serves `directory` (the live working copy - index.html plus the
+    per-bot ledger/history files) over HTTP in a background thread, on
+    Railway's assigned PORT (falls back to 8080 for local testing)."""
+    port = int(os.environ.get("PORT", 8080))
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=directory)
+    server = http.server.ThreadingHTTPServer(("0.0.0.0", port), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    print(f"Dashboard serving on 0.0.0.0:{port} from {directory}")
+
+
 def main():
     workdir = git_setup()
     os.chdir(workdir)
     print(f"Cloned into {workdir}, running from there.")
+    start_dashboard_server(workdir)
     print("Railway worker started. Checking each bot on its own interval:")
     for bot_key, interval in CHECK_INTERVAL_SECONDS.items():
         print(f"  {bot_key}: every {interval}s")

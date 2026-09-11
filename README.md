@@ -50,37 +50,42 @@ persistent process for an always-on host like Railway: it runs all three
 bots in one long-lived process, checking each on its own real internal
 clock instead of waiting for an external scheduler, and pushes each
 bot's updated `ledger_<bot>.json`/`history_<bot>.csv` back to git after
-every check - same repo, same GitHub Pages dashboard, just triggered
-more reliably.
+every check.
+
+It also serves the dashboard directly over HTTP from the same process
+(Railway's assigned `PORT`), reading the live working copy it just wrote
+to - so the dashboard doesn't wait on a git push *and* a GitHub Pages
+rebuild before showing a new check. GitHub Pages keeps working as a
+second, slightly-delayed copy of the same dashboard reading the same
+repo - this doesn't replace it, just adds a faster one.
 
 To deploy:
-1. Create a new Railway project, deploy from this GitHub repo (Railway
-   detects the `Dockerfile` and builds from that - deliberately not
-   relying on Railway's auto-detected Python buildpack, since neither
-   Nixpacks nor Railway's newer Railpack builder include `git` by
-   default, and each needs its own config format to add it. A plain
-   Dockerfile sidesteps that entirely. No exposed port needed - this
-   isn't a web service).
+1. Create a Railway project and service (`railway login`, `railway init`
+   or `railway link` to an existing project).
 2. Create a GitHub **fine-grained personal access token**
    (github.com/settings/tokens) scoped to just this repo, with
    Contents: Read and write permission - nothing broader.
 3. In Railway's service settings, add two environment variables:
    - `GIT_AUTH_TOKEN` — the token from step 2
    - `GIT_REPO_URL` — `github.com/<your-username>/<repo-name>.git`
-4. Deploy. Check Railway's logs to confirm it's cloning, checking, and
-   pushing successfully.
-5. **Check that Railway's GitHub integration actually auto-deploys on
-   push** - if the service settings show "GitHub Repo not found" under
-   "Branch connected to production", Railway's GitHub App was never
-   properly authorized for this repo (this happened on the first deploy
-   here: quick-deploying by pasting a repo URL did a one-time public
-   clone, not a real webhook-connected integration). Until fixed, new
-   commits only get picked up via the manual "Update" button in
-   settings, not automatically - reconnect the repo through Railway's
-   GitHub App authorization flow to fix it properly.
-6. Once confirmed working, disable the GitHub Actions `schedule` triggers
-   (leave `workflow_dispatch` for manual runs) so both systems aren't
-   pushing to the same repo at once.
+4. Generate a public domain for the service (Settings → Networking →
+   Generate Domain) so the dashboard is reachable.
+5. Deploy with `railway up` - builds from the `Dockerfile` (deliberately
+   not relying on Railway's auto-detected Python buildpack, since neither
+   Nixpacks nor Railway's newer Railpack builder include `git` by
+   default, and each needs its own config format to add it - a plain
+   Dockerfile sidesteps that entirely) and uploads straight from your
+   local files, no GitHub involvement in the deploy itself.
+6. From then on, every code change just needs `railway up` again from
+   this directory - no push, no webhook, no browser click. (An earlier
+   version of this setup connected Railway to the GitHub repo for
+   auto-deploy instead; that hit a real snag - Railway's GitHub App was
+   never properly authorized, so pushes were silently not picked up. The
+   `railway up` workflow above sidesteps that failure mode entirely by
+   not depending on it.)
+7. GitHub Actions' `schedule` triggers are disabled (kept as
+   `workflow_dispatch` for manual runs) so only Railway is checking the
+   bots - no duplicate/competing pushes to the same repo.
 
 ### Option B: GitHub Actions (free, but scheduling is best-effort)
 

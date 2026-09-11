@@ -1,8 +1,9 @@
 name: Paper trade check (5m bot)
 
 on:
-  schedule:
-    - cron: "*/5 * * * *"
+  # schedule trigger disabled - the Railway worker (railway_worker.py) now
+  # runs this bot's checks continuously and more reliably. Kept here as a
+  # manual fallback only. See README's Railway section.
   workflow_dispatch: {}
 
 permissions:
