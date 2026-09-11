@@ -1,13 +1,13 @@
 {
-  "cash_gbp": 98.94432368025197,
-  "coin_holdings": 0.0,
-  "fees_paid_gbp": 0.5179258487754713,
+  "cash_gbp": 0.0,
+  "coin_holdings": 0.0017189544955362869,
+  "fees_paid_gbp": 0.7751810903441264,
   "cumulative_gross_proceeds_gbp": 99.20224952902744,
   "cumulative_net_gain_gbp": -1.0556763197480308,
   "realized_gains_by_tax_year": {
     "2026/27": -1.0556763197480308
   },
-  "last_ma_relationship": "below",
+  "last_ma_relationship": "above",
   "trade_history": [
     {
       "timestamp": "2026-09-11T08:39:23.393175+00:00",
@@ -30,6 +30,16 @@
       "coin_holdings_after": 0.0,
       "capital_gain_gbp": -1.0556763197480308,
       "tax_year": "2026/27"
+    },
+    {
+      "timestamp": "2026-09-11T12:40:55.140841+00:00",
+      "action": "buy",
+      "price_gbp": 57411.1,
+      "coin_amount": 0.0017189544955362869,
+      "cash_spent_gbp": 98.94432368025197,
+      "fee_gbp": 0.2572552415686551,
+      "cash_after": 0.0,
+      "coin_holdings_after": 0.0017189544955362869
     }
   ]
 }
