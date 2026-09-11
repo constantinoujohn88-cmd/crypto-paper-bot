@@ -107,6 +107,7 @@ python main.py --bot 1h --once    # single check and exit (what GitHub Actions u
 | `.github/workflows/paper-trade-*.yml` | Scheduled Actions workflows, one per bot, on that bot's own cadence |
 | `railway_worker.py` | Persistent scheduler for Railway (or similar) - runs all three bots on a real internal clock |
 | `Procfile` | Tells Railway to run `railway_worker.py` as a background worker |
+| `nixpacks.toml` | Installs `git` into Railway's build image - not present by default, confirmed by a crashed first deploy |
 
 ## Watching your trades
 

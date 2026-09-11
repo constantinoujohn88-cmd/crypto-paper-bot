@@ -13,7 +13,10 @@ there's no concurrent-push race the way there was across separate
 GitHub Actions workflows.
 
 Requires:
-  - git available on PATH (Railway's default Python image has it)
+  - git available on PATH - NOT included in Railway's default Python/Nixpacks
+    image (confirmed: a first deploy crashed with FileNotFoundError: 'git').
+    nixpacks.toml in this repo installs it via aptPkgs - keep that file if
+    you fork/move this.
   - GIT_AUTH_TOKEN environment variable: a GitHub personal access token
     with permission to push to this repo. Set as a Railway secret, never
     committed.
