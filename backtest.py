@@ -65,11 +65,13 @@ def run_backtest(prices: list[float], short_period: int, long_period: int,
         "trade_history": [],
     }
     equity_curve = []
+    prev_relationship = None
 
-    for i in range(long_period + 1, len(prices) + 1):
+    for i in range(long_period, len(prices) + 1):
         window = prices[:i]
         price = window[-1]
-        signal, _, _ = strategy.compute_signal(window, short_period, long_period)
+        short_ma, long_ma = strategy.moving_averages(window, short_period, long_period)
+        signal, prev_relationship = strategy.compute_signal(short_ma, long_ma, prev_relationship)
 
         if signal == "buy":
             ledger_module.execute_paper_buy(ledger, price, fee_pct)

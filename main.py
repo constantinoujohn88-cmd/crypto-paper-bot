@@ -71,9 +71,13 @@ def run_once(ledger: dict, bot_cfg: dict, files: dict) -> None:
         config.KRAKEN_PAIR, bot_cfg["interval_minutes"]
     )
     current_price = prices[-1]
-    signal, short_ma, long_ma = strategy.compute_signal(
+    short_ma, long_ma = strategy.moving_averages(
         prices, bot_cfg["short_period"], bot_cfg["long_period"]
     )
+    signal, current_relationship = strategy.compute_signal(
+        short_ma, long_ma, ledger.get("last_ma_relationship")
+    )
+    ledger["last_ma_relationship"] = current_relationship
 
     logging.info(
         "Price: £%.2f | Signal: %s | Cash: £%.2f | Holdings: %.6f coin",
@@ -94,7 +98,11 @@ def run_once(ledger: dict, bot_cfg: dict, files: dict) -> None:
 
     if trade:
         logging.info("Executed %s: %s", trade["action"].upper(), trade)
-        ledger_module.save_ledger(files["ledger"], ledger)
+
+    # Always persist, not just on a trade - last_ma_relationship has to
+    # survive to the next run (a fresh process each time under GitHub
+    # Actions) for crossover detection to work at all.
+    ledger_module.save_ledger(files["ledger"], ledger)
 
     total_value = ledger_module.total_value_gbp(ledger, current_price)
     logging.info("Portfolio value: £%.2f (started at £%.2f)",

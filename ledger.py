@@ -21,6 +21,7 @@ def load_ledger(path: str, starting_balance: float) -> dict:
         "cumulative_gross_proceeds_gbp": 0.0,
         "cumulative_net_gain_gbp": 0.0,
         "realized_gains_by_tax_year": {},
+        "last_ma_relationship": None,
         "trade_history": [],
     }
 
