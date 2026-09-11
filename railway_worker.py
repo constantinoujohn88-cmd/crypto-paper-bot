@@ -13,10 +13,14 @@ there's no concurrent-push race the way there was across separate
 GitHub Actions workflows.
 
 Requires:
-  - git available on PATH - NOT included in Railway's default Python/Nixpacks
-    image (confirmed: a first deploy crashed with FileNotFoundError: 'git').
-    nixpacks.toml in this repo installs it via aptPkgs - keep that file if
-    you fork/move this.
+  - git available on PATH - NOT included in Railway's default Python
+    buildpack image, whether it picks Nixpacks or its newer Railpack
+    builder (confirmed: two separate crashes, FileNotFoundError: 'git',
+    one under each builder - a nixpacks.toml fix had no effect once
+    Railway had already switched to Railpack for this project). The
+    Dockerfile in this repo installs git explicitly and sidesteps
+    guessing at whichever buildpack-specific config format is current -
+    keep it if you fork/move this.
   - GIT_AUTH_TOKEN environment variable: a GitHub personal access token
     with permission to push to this repo. Set as a Railway secret, never
     committed.

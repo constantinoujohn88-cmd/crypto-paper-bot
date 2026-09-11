@@ -55,8 +55,12 @@ more reliably.
 
 To deploy:
 1. Create a new Railway project, deploy from this GitHub repo (Railway
-   auto-detects Python + the `Procfile`, which runs `python railway_worker.py`
-   as a worker - no exposed port needed, this isn't a web service).
+   detects the `Dockerfile` and builds from that - deliberately not
+   relying on Railway's auto-detected Python buildpack, since neither
+   Nixpacks nor Railway's newer Railpack builder include `git` by
+   default, and each needs its own config format to add it. A plain
+   Dockerfile sidesteps that entirely. No exposed port needed - this
+   isn't a web service).
 2. Create a GitHub **fine-grained personal access token**
    (github.com/settings/tokens) scoped to just this repo, with
    Contents: Read and write permission - nothing broader.
@@ -65,7 +69,16 @@ To deploy:
    - `GIT_REPO_URL` — `github.com/<your-username>/<repo-name>.git`
 4. Deploy. Check Railway's logs to confirm it's cloning, checking, and
    pushing successfully.
-5. Once confirmed working, disable the GitHub Actions `schedule` triggers
+5. **Check that Railway's GitHub integration actually auto-deploys on
+   push** - if the service settings show "GitHub Repo not found" under
+   "Branch connected to production", Railway's GitHub App was never
+   properly authorized for this repo (this happened on the first deploy
+   here: quick-deploying by pasting a repo URL did a one-time public
+   clone, not a real webhook-connected integration). Until fixed, new
+   commits only get picked up via the manual "Update" button in
+   settings, not automatically - reconnect the repo through Railway's
+   GitHub App authorization flow to fix it properly.
+6. Once confirmed working, disable the GitHub Actions `schedule` triggers
    (leave `workflow_dispatch` for manual runs) so both systems aren't
    pushing to the same repo at once.
 
@@ -106,8 +119,7 @@ python main.py --bot 1h --once    # single check and exit (what GitHub Actions u
 | `index.html` | Static dashboard, served by GitHub Pages, comparing all three bots |
 | `.github/workflows/paper-trade-*.yml` | Scheduled Actions workflows, one per bot, on that bot's own cadence |
 | `railway_worker.py` | Persistent scheduler for Railway (or similar) - runs all three bots on a real internal clock |
-| `Procfile` | Tells Railway to run `railway_worker.py` as a background worker |
-| `nixpacks.toml` | Installs `git` into Railway's build image - not present by default, confirmed by a crashed first deploy |
+| `Dockerfile` | Builds a container with `git` installed and runs `railway_worker.py` - used instead of Railway's auto-detected Python buildpack, which doesn't include git under either Nixpacks or Railpack |
 
 ## Watching your trades
 
