@@ -1,10 +1,21 @@
 {
-  "cash_gbp": 100.0,
-  "coin_holdings": 0.0,
-  "fees_paid_gbp": 0.0,
+  "cash_gbp": 0.0,
+  "coin_holdings": 0.001741419918952564,
+  "fees_paid_gbp": 0.26,
   "cumulative_gross_proceeds_gbp": 0.0,
   "cumulative_net_gain_gbp": 0.0,
   "realized_gains_by_tax_year": {},
-  "last_ma_relationship": "below",
-  "trade_history": []
+  "last_ma_relationship": "above",
+  "trade_history": [
+    {
+      "timestamp": "2026-09-11T08:39:23.393175+00:00",
+      "action": "buy",
+      "price_gbp": 57275.1,
+      "coin_amount": 0.001741419918952564,
+      "cash_spent_gbp": 100.0,
+      "fee_gbp": 0.26,
+      "cash_after": 0.0,
+      "coin_holdings_after": 0.001741419918952564
+    }
+  ]
 }
