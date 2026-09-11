@@ -38,14 +38,46 @@ more in fees regardless of regime."
 
 ## Running it
 
-This is designed to run on **GitHub Actions**, not on your own machine: three
-scheduled workflows (`.github/workflows/paper-trade-5m.yml`, `-1h.yml`,
-`-1d.yml`) each run one bot's check on its own cadence, forever, for free,
-without a server or a terminal window staying open. Each run commits that
-bot's updated `ledger_<bot>.json` and `history_<bot>.csv` back to the repo,
-so the trade history is versioned in git.
+Two ways to run this continuously, plus a way to run one bot locally.
 
-To run one locally instead (e.g. to test changes before pushing):
+### Option A: Railway (recommended - fixes GitHub's scheduling lag)
+
+GitHub Actions' `schedule` trigger is best-effort and gets delayed under
+load - this project hit that repeatedly in practice (a 5-minute cron
+actually firing every ~12-18 minutes, missed crossovers, buying at the
+top of a spike because the check ran late). `railway_worker.py` is a
+persistent process for an always-on host like Railway: it runs all three
+bots in one long-lived process, checking each on its own real internal
+clock instead of waiting for an external scheduler, and pushes each
+bot's updated `ledger_<bot>.json`/`history_<bot>.csv` back to git after
+every check - same repo, same GitHub Pages dashboard, just triggered
+more reliably.
+
+To deploy:
+1. Create a new Railway project, deploy from this GitHub repo (Railway
+   auto-detects Python + the `Procfile`, which runs `python railway_worker.py`
+   as a worker - no exposed port needed, this isn't a web service).
+2. Create a GitHub **fine-grained personal access token**
+   (github.com/settings/tokens) scoped to just this repo, with
+   Contents: Read and write permission - nothing broader.
+3. In Railway's service settings, add two environment variables:
+   - `GIT_AUTH_TOKEN` — the token from step 2
+   - `GIT_REPO_URL` — `github.com/<your-username>/<repo-name>.git`
+4. Deploy. Check Railway's logs to confirm it's cloning, checking, and
+   pushing successfully.
+5. Once confirmed working, disable the GitHub Actions `schedule` triggers
+   (leave `workflow_dispatch` for manual runs) so both systems aren't
+   pushing to the same repo at once.
+
+### Option B: GitHub Actions (free, but scheduling is best-effort)
+
+Three scheduled workflows (`.github/workflows/paper-trade-5m.yml`, `-1h.yml`,
+`-1d.yml`) each run one bot's check on its own cadence, without a server or
+a terminal window staying open - genuinely free, but subject to the
+scheduling lag described above. Each run commits that bot's updated files
+back to the repo the same way Railway does.
+
+### Running one bot locally (for testing changes before deploying either way)
 
 ```bash
 cd crypto-paper-bot
@@ -73,6 +105,8 @@ python main.py --bot 1h --once    # single check and exit (what GitHub Actions u
 | `backtest.py` | Tests the strategy against real historical prices instead of guessing at settings |
 | `index.html` | Static dashboard, served by GitHub Pages, comparing all three bots |
 | `.github/workflows/paper-trade-*.yml` | Scheduled Actions workflows, one per bot, on that bot's own cadence |
+| `railway_worker.py` | Persistent scheduler for Railway (or similar) - runs all three bots on a real internal clock |
+| `Procfile` | Tells Railway to run `railway_worker.py` as a background worker |
 
 ## Watching your trades
 
