@@ -127,6 +127,21 @@
   .export-row { display: flex; justify-content: flex-end; margin-bottom: 10px; gap: 8px; }
   .panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
   .panel-head h3 { margin: 0; }
+
+  .chart-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+  .chart-head h3 { margin: 0; }
+  .range-btns { display: flex; gap: 4px; flex-wrap: wrap; }
+  .range-btn {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 0.78rem;
+    cursor: pointer;
+  }
+  .range-btn:hover { border-color: var(--accent); }
+  .range-btn.active { border-color: var(--accent); color: var(--text); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -144,7 +159,10 @@
   <div class="cards" id="compareCards"></div>
 
   <div class="panel">
-    <h3>Portfolio value — all three bots</h3>
+    <div class="chart-head">
+      <h3>Portfolio value — all three bots</h3>
+      <div class="range-btns" id="compareRange"></div>
+    </div>
     <svg id="compareChart" viewBox="0 0 860 220"></svg>
     <div class="legend" id="compareLegend"></div>
   </div>
@@ -166,6 +184,22 @@ const BOTS = [
 ];
 const STARTING_BALANCE = 100.0;
 let latestBotsData = []; // updated by load(), read by the export button handlers
+
+// Zoom/range control for the charts - without this, a long-running bot's
+// full history dwarfs recent price movement on a fixed y-axis and every
+// chart ends up looking like a flat line. Slicing to a recent time window
+// before rendering lets each chart's own min/max autoscale to just that
+// window, so short-term movement is visible again. "All" keeps the old
+// full-history behaviour.
+const RANGE_OPTIONS = [
+  { key: "1h", label: "1H", ms: 60 * 60 * 1000 },
+  { key: "6h", label: "6H", ms: 6 * 60 * 60 * 1000 },
+  { key: "24h", label: "24H", ms: 24 * 60 * 60 * 1000 },
+  { key: "7d", label: "7D", ms: 7 * 24 * 60 * 60 * 1000 },
+  { key: "30d", label: "30D", ms: 30 * 24 * 60 * 60 * 1000 },
+  { key: "all", label: "All", ms: null },
+];
+const chartRange = { compare: "all" }; // per-chart selection; chartRange[botKey] set in buildBotPanelsSkeleton
 
 // UK Capital Gains Tax assumptions - mirrors config.py's CGT_ANNUAL_EXEMPT_AMOUNT_GBP
 // and CGT_RATE. Illustrative only, not tax advice - see uk_tax.py for what
@@ -253,6 +287,28 @@ function buildTimePath(points, w, h, pad, tMin, tMax, yMin, yMax) {
     drawing = true;
   });
   return d.trim();
+}
+
+// Slices history down to the selected lookback window. Always keeps at
+// least the last 2 rows so picking a tight window right after a quiet
+// period doesn't leave a chart empty.
+function filterHistoryByRange(history, rangeKey) {
+  const opt = RANGE_OPTIONS.find(o => o.key === rangeKey);
+  if (!opt || opt.ms === null || history.length === 0) return history;
+  const cutoff = Date.now() - opt.ms;
+  const filtered = history.filter(r => new Date(r.timestamp).getTime() >= cutoff);
+  return filtered.length >= 2 ? filtered : history.slice(-2);
+}
+
+function renderRangeButtons(containerId, activeKey, onSelect) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  el.innerHTML = RANGE_OPTIONS.map(o =>
+    `<button class="range-btn${o.key === activeKey ? " active" : ""}" data-range="${o.key}">${o.label}</button>`
+  ).join("");
+  el.querySelectorAll(".range-btn").forEach(btn => {
+    btn.addEventListener("click", () => onSelect(btn.dataset.range));
+  });
 }
 
 function renderChart(svgId, values, color) {
@@ -343,6 +399,34 @@ function renderCompareChart(botsData) {
           stroke="var(--muted)" stroke-width="1" stroke-dasharray="4,4" opacity="0.5"/>
     ${paths}
   `;
+}
+
+// Wrappers that apply the current zoom selection before delegating to the
+// plain renderers above - kept separate so the renderers themselves stay
+// simple "just draw this data" functions.
+function renderCompareChartZoomed(botsData) {
+  const rangeKey = chartRange.compare;
+  const zoomed = botsData.map(b => ({ ...b, history: filterHistoryByRange(b.history, rangeKey) }));
+  renderCompareChart(zoomed);
+}
+
+function renderBotCharts(b) {
+  const zoomedHistory = filterHistoryByRange(b.history, chartRange[b.meta.key]);
+  renderStrategyChart(`priceChart-${b.meta.key}`, zoomedHistory);
+  renderChart(`valueChart-${b.meta.key}`, zoomedHistory.map(r => Number(r.total_value_gbp)), "var(--green)");
+}
+
+function onCompareRangeSelect(key) {
+  chartRange.compare = key;
+  renderRangeButtons("compareRange", key, onCompareRangeSelect);
+  if (latestBotsData.length) renderCompareChartZoomed(latestBotsData);
+}
+
+function onBotRangeSelect(botKey, key) {
+  chartRange[botKey] = key;
+  renderRangeButtons(`range-${botKey}`, key, (k) => onBotRangeSelect(botKey, k));
+  const b = latestBotsData.find(x => x.meta.key === botKey);
+  if (b) renderBotCharts(b);
 }
 
 function renderCompareCards(botsData) {
@@ -525,8 +609,11 @@ function buildBotPanelsSkeleton() {
   document.getElementById("botPanels").innerHTML = BOTS.map((b, i) => `
     <div class="bot-panel" id="panel-${b.key}" ${i === 0 ? "" : "hidden"}>
       <div class="cards" id="cards-${b.key}"></div>
+      <div class="range-btns" id="range-${b.key}" style="margin-bottom: 4px;"></div>
       <div class="panel">
-        <h3>Strategy: price, moving averages &amp; trades</h3>
+        <div class="chart-head">
+          <h3>Strategy: price, moving averages &amp; trades</h3>
+        </div>
         <svg id="priceChart-${b.key}" viewBox="0 0 860 200"></svg>
         <div class="legend">
           <span class="price">BTC price</span>
@@ -569,10 +656,13 @@ function buildBotPanelsSkeleton() {
     document.getElementById(`exportBtn-${b.key}`).addEventListener("click", () => {
       exportBotCSV(b.key, latestBotsData);
     });
+    chartRange[b.key] = "all";
+    renderRangeButtons(`range-${b.key}`, chartRange[b.key], (k) => onBotRangeSelect(b.key, k));
   });
   document.getElementById("exportAllBtn").addEventListener("click", () => {
     exportAllCSV(latestBotsData);
   });
+  renderRangeButtons("compareRange", chartRange.compare, onCompareRangeSelect);
 }
 
 async function fetchBot(bot) {
@@ -597,7 +687,7 @@ async function load() {
       : "No data yet — waiting for the bots' first scheduled checks.";
 
     renderCompareCards(botsData);
-    renderCompareChart(botsData);
+    renderCompareChartZoomed(botsData);
     document.getElementById("compareLegend").innerHTML = BOTS.map(b =>
       `<span class="dot-${b.key}">${b.label}</span>`
     ).join("");
@@ -606,8 +696,7 @@ async function load() {
       const latest = b.history[b.history.length - 1];
       if (!latest) return;
       renderCards(`cards-${b.meta.key}`, latest, b.ledger);
-      renderStrategyChart(`priceChart-${b.meta.key}`, b.history);
-      renderChart(`valueChart-${b.meta.key}`, b.history.map(r => Number(r.total_value_gbp)), "var(--green)");
+      renderBotCharts(b);
       renderTrades(`trades-${b.meta.key}`, b.ledger.trade_history);
       renderChecks(`checks-${b.meta.key}`, b.history);
     });
