@@ -60,13 +60,15 @@ import config
 import ledger as ledger_module
 import main as bot_main
 
-# How often each bot actually checks, running for real on this clock -
-# matches the cadence the GitHub Actions cron workflows were configured
-# for, but now actually honoured on time.
+# How often each bot actually checks, running for real on this clock.
+# "5m-hybrid" shares the "5m" bot's cadence (same interval_minutes in
+# config.BOTS) since it's a strategy comparison at the same speed, not a
+# cadence comparison - see config.py's BOTS comment.
 CHECK_INTERVAL_SECONDS = {
     "5m": 300,
     "1h": 900,
     "1d": 3600,
+    "5m-hybrid": 300,
 }
 
 POLL_SECONDS = 15  # how often the scheduler wakes up to check what's due

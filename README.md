@@ -1,10 +1,11 @@
 # Crypto Paper Trading Bots
 
-Three bots that simulate trading BTC/GBP using live Kraken prices and the
-same moving-average crossover strategy - the only difference between them
-is how often they check the market. Each starts with its own virtual £100
-and never touches real money unless you deliberately change that (see
-below).
+Four bots that simulate trading BTC/GBP using live Kraken prices. Three
+share the same moving-average crossover strategy and differ only in how
+often they check the market; a fourth adds an experimental early-entry
+variant at the fastest cadence (see "Why four bots" below). Each starts
+with its own virtual £100 and never touches real money unless you
+deliberately change that (see below).
 
 ## What it does
 
@@ -19,7 +20,7 @@ Nothing here places a real order. `config.PAPER_MODE = True` by default, and
 `main.py` will refuse to go further than logging a warning if you turn it off
 without also implementing `place_live_order()`.
 
-## Why three bots
+## Why four bots
 
 `config.BOTS` defines three independent bots with **identical** strategy
 periods (12/26 moving average) but different candle cadences:
@@ -35,6 +36,15 @@ question cleanly: does trading frequency alone change the outcome? See
 `backtest.py` below - the honest answer, from real historical data, is
 "it depends on the market regime, but faster trading reliably means paying
 more in fees regardless of regime."
+
+A 4th bot, `5m-hybrid`, sits outside that comparison on purpose - same
+cadence and periods as `5m`, its own independent £100, but with the
+breakout hybrid entry from the "Breakout hybrid entry" section below
+enabled. It exists to answer a different question: does buying
+immediately on a fast price move (instead of waiting for the crossover to
+confirm it) actually help, tested with real money-shaped stakes over
+real time, alongside the plain `5m` bot it's compared against under
+identical market conditions.
 
 ## Running it
 
@@ -123,8 +133,8 @@ python main.py --bot 1h --once    # single check and exit (what GitHub Actions u
 | `export_tax_csv.py` | Exports a bot's trades as a CSV formatted for a tax tool/accountant |
 | `reconcile.py` | Matches the ledger against a real Kraken trade export - for if you ever go live |
 | `backtest.py` | Tests the strategy against real historical prices instead of guessing at settings |
-| `index.html` | Static dashboard comparing all three bots, served directly by `railway_worker.py` |
-| `railway_worker.py` | Persistent scheduler for Railway (or similar) - runs all three bots on a real internal clock, and serves `index.html` |
+| `index.html` | Static dashboard comparing all four bots, served directly by `railway_worker.py` |
+| `railway_worker.py` | Persistent scheduler for Railway (or similar) - runs all four bots on a real internal clock, and serves `index.html` |
 | `Dockerfile` | Builds a container with `git` installed and runs `railway_worker.py` - used instead of Railway's auto-detected Python buildpack, which doesn't include git under either Nixpacks or Railpack |
 
 ## Watching your trades
@@ -132,11 +142,11 @@ python main.py --bot 1h --once    # single check and exit (what GitHub Actions u
 Each bot writes a snapshot every check to its own `history_<bot>.csv`
 (price, moving averages, signal, cash, holdings, portfolio value) in
 addition to `ledger_<bot>.json` (trade history). `index.html` is a
-dashboard that reads all three bots' files directly - no build step -
+dashboard that reads all four bots' files directly - no build step -
 and is served by `railway_worker.py` itself at whatever domain you
 generated in Railway (Settings → Networking → Generate Domain).
 
-It shows a side-by-side comparison (portfolio value chart with all three
+It shows a side-by-side comparison (portfolio value chart with all four
 bots overlaid, one line each) plus a per-bot detail view (price + moving
 averages + buy/sell markers, portfolio value, trade history, recent
 checks) behind tabs, each with 1H/6H/24H/7D/30D/All zoom controls so
@@ -233,6 +243,38 @@ ended up rejecting virtually every trade regardless of the threshold.
 Caught by testing against real data before drawing any conclusions from
 it - the version described above is what actually shipped.
 
+## Breakout hybrid entry (buying before the crossover confirms)
+
+The crossover strategy is a *confirmation* strategy by design: it only
+buys once the short MA has actually caught up and crossed the long MA,
+which means it always misses the first leg of a fast move. That lag is
+also what protects it from whipsawing on every false spike - a
+deliberate trade-off, not a bug (see `strategy.py`'s docstring). If you'd
+rather catch the move earlier at the cost of more false starts,
+`config.BOTS[<key>]` optionally sets `breakout_lookback`: while in cash,
+the bot buys immediately - independent of the crossover - the moment
+price closes above the highest price of the preceding `breakout_lookback`
+candles. The crossover buy still exists as a fallback for slower-building
+trends that never produce a sharp breakout, and the fee-aware filter
+above still applies to a breakout-triggered buy exactly as it would to a
+crossover one.
+
+Backtested first (`backtest.py --breakout N --fee-aware 1.0`, since
+that's what actually runs together): every lookback tested (6/12/24/48
+candles) improved on the plain 5-minute bot's own currently-deployed
+result for the 12/26 period pair, best at 12 candles (a 1-hour lookback).
+But that's only 2-3 actual breakout trades across the ~2.5 days of data
+Kraken's API gives us for 5-minute candles - a thinner sample than what
+justified the fee-aware filter, and it made things *worse* when tested
+against other period pairs (12/50, 20/50). Genuinely unproven either way.
+
+Rather than edit the plain `5m` bot on that thin evidence, it runs as its
+own bot instead: `5m-hybrid`, same cadence and periods as `5m`, its own
+independent £100, `fee_aware_multiple: 1.0` and `breakout_lookback: 12`.
+It exists to accumulate real, independent evidence over time by running
+alongside `5m` under identical market conditions, rather than gambling
+the config a stronger backtest already justified.
+
 ## UK tax (illustrative, not advice)
 
 **This is not tax advice.** `uk_tax.py` models UK Capital Gains Tax as an
@@ -272,7 +314,7 @@ sell-side costs, summed across every tax year).
 ### Exporting for a tax tool or accountant
 
 The dashboard itself has "Export CSV" buttons - one per bot (in that bot's
-Trade History panel) and one for all three bots combined (top of the
+Trade History panel) and one for all four bots combined (top of the
 Compare cadences section) - that download directly from your browser, no
 Python needed. Or run it locally for the same file:
 

@@ -117,6 +117,21 @@ def fee_aware_filtered(ledger: dict, bot_cfg: dict, price: float) -> bool:
     return move_pct < round_trip_fee_pct * multiple
 
 
+def breakout_triggered(bot_cfg: dict, prices: list[float], price: float) -> bool:
+    """Returns True if price has closed above the highest price of the
+    preceding breakout_lookback candles - a HYBRID entry, independent of
+    the crossover, meant to catch a fast move early instead of waiting for
+    the short MA to catch up. See config.py's BOTS comment and
+    backtest.py's --breakout flag docstring for the reasoning. Disabled
+    (returns False) if breakout_lookback isn't set, or there isn't yet
+    enough price history to look back that far."""
+    lookback = bot_cfg.get("breakout_lookback")
+    if lookback is None or len(prices) <= lookback:
+        return False
+    recent_high = max(prices[-1 - lookback:-1])
+    return price > recent_high
+
+
 def run_once(ledger: dict, bot_cfg: dict, files: dict) -> None:
     prices = data_fetcher.get_recent_closes(
         config.KRAKEN_PAIR, bot_cfg["interval_minutes"]
@@ -140,6 +155,14 @@ def run_once(ledger: dict, bot_cfg: dict, files: dict) -> None:
             "Price: £%.2f | Signal: %s | Cash: £%.2f | Holdings: %.6f coin",
             current_price, signal, ledger["cash_gbp"], ledger["coin_holdings"],
         )
+
+        if signal == "hold" and ledger["coin_holdings"] <= 0 and breakout_triggered(bot_cfg, prices, current_price):
+            signal = "buy"
+            logged_signal = "buy"
+            logging.info(
+                "Breakout buy triggered: price £%.2f above the preceding %d-candle high",
+                current_price, bot_cfg["breakout_lookback"],
+            )
 
         if signal in ("buy", "sell") and fee_aware_filtered(ledger, bot_cfg, current_price):
             logged_signal = "hold"  # filtered - not retried, same as backtest.py's --fee-aware

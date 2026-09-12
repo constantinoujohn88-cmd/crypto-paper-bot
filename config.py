@@ -48,6 +48,14 @@ KRAKEN_PAIR = "XBTGBP"          # BTC/GBP on Kraken. See https://api.kraken.com/
 # benefit - daily moves already usually clear the fee threshold on their
 # own, so the filter barely triggers and occasionally cut a rare, large
 # winning trade instead - left disabled.
+#
+# breakout_lookback (optional, None = disabled): a HYBRID entry, not used
+# by any of the three cadence-comparison bots below. While in cash, buys
+# immediately - independent of the crossover - the moment price closes
+# above the highest price of the preceding breakout_lookback candles,
+# instead of waiting for the short MA to catch up and cross the long MA.
+# The crossover buy still exists as a fallback. See the "5m-hybrid" bot
+# below and backtest.py's --breakout flag for the reasoning.
 BOTS = {
     "5m": {
         "label": "5-minute candles",
@@ -57,6 +65,7 @@ BOTS = {
         "trailing_stop_pct": None,
         "trailing_stop_arm_pct": None,
         "fee_aware_multiple": 1.0,
+        "breakout_lookback": None,
     },
     "1h": {
         "label": "Hourly candles",
@@ -66,6 +75,7 @@ BOTS = {
         "trailing_stop_pct": 1.0,
         "trailing_stop_arm_pct": 0.75,
         "fee_aware_multiple": 0.5,
+        "breakout_lookback": None,
     },
     "1d": {
         "label": "Daily candles",
@@ -75,6 +85,30 @@ BOTS = {
         "trailing_stop_pct": None,
         "trailing_stop_arm_pct": None,
         "fee_aware_multiple": None,
+        "breakout_lookback": None,
+    },
+    # A 4th bot, NOT part of the cadence comparison above - same 5-minute
+    # cadence and periods as "5m", its own independent £100, but with the
+    # breakout hybrid entry enabled, so it can be compared head-to-head
+    # against the plain crossover "5m" bot under identical market
+    # conditions. Backtested first (see backtest.py --breakout N
+    # --fee-aware 1.0): every lookback tested (6/12/24/48 candles)
+    # improved on "5m"'s own currently-deployed result for this period
+    # pair, best at 12 candles (1h lookback) - but off only 2-3 actual
+    # breakout trades in ~2.5 days of data, a much thinner sample than
+    # what justified the fee-aware filter above. Genuinely unproven -
+    # that's the point of running it as its own bot with its own money
+    # instead of editing "5m" in place: it accumulates real, independent
+    # evidence over time instead of overwriting a config already trusted.
+    "5m-hybrid": {
+        "label": "5-min hybrid (breakout)",
+        "interval_minutes": 5,
+        "short_period": 12,
+        "long_period": 26,
+        "trailing_stop_pct": None,
+        "trailing_stop_arm_pct": None,
+        "fee_aware_multiple": 1.0,
+        "breakout_lookback": 12,
     },
 }
 DEFAULT_BOT = "5m"

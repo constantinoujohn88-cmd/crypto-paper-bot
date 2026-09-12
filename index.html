@@ -18,6 +18,7 @@
     --bot-5m: #58a6ff;
     --bot-1h: #f2cc60;
     --bot-1d: #bc8cff;
+    --bot-5m-hybrid: #39c5cf;
   }
   @media (prefers-color-scheme: light) {
     :root {
@@ -86,6 +87,7 @@
   .legend .dot-5m::before { background: var(--bot-5m); }
   .legend .dot-1h::before { background: var(--bot-1h); }
   .legend .dot-1d::before { background: var(--bot-1d); }
+  .legend .dot-5m-hybrid::before { background: var(--bot-5m-hybrid); }
   table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
   th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
   th { color: var(--muted); font-weight: 500; font-size: 0.78rem; text-transform: uppercase; }
@@ -149,8 +151,8 @@
   <h1>Crypto Paper Trading Bots</h1>
   <div class="subtitle" id="subtitle">Simulated trading only — no real money involved. Loading…</div>
 
-  <h2 class="section">Compare cadences</h2>
-  <p class="section-sub">Three bots, identical strategy and periods (12/26 moving average crossover), each with its own independent £100 and its own trades. The <em>only</em> difference between them is how often they check the market and how big a candle they react to — this is a controlled test of whether trading frequency alone changes the outcome.</p>
+  <h2 class="section">Compare cadences (and one strategy variant)</h2>
+  <p class="section-sub">The first three bots share identical strategy and periods (12/26 moving average crossover), each with its own independent £100 and its own trades. The <em>only</em> difference between them is how often they check the market and how big a candle they react to — a controlled test of whether trading frequency alone changes the outcome. The 4th bot, "5-min hybrid", is a separate experiment: same cadence and periods as the plain 5-minute bot and its own independent £100, but with an added breakout entry that can buy immediately on a fast price move instead of waiting for the crossover to confirm it — see README for the reasoning and the (thin, still-unproven) backtest evidence behind it.</p>
 
   <div class="export-row">
     <button class="export-btn" id="exportAllBtn">Export all trades (CSV)</button>
@@ -160,7 +162,7 @@
 
   <div class="panel">
     <div class="chart-head">
-      <h3>Portfolio value — all three bots</h3>
+      <h3>Portfolio value — all bots</h3>
       <div class="range-btns" id="compareRange"></div>
     </div>
     <svg id="compareChart" viewBox="0 0 860 220"></svg>
@@ -181,6 +183,7 @@ const BOTS = [
   { key: "5m", label: "5-minute candles", color: "var(--bot-5m)", cssVar: "--bot-5m" },
   { key: "1h", label: "Hourly candles",   color: "var(--bot-1h)", cssVar: "--bot-1h" },
   { key: "1d", label: "Daily candles",    color: "var(--bot-1d)", cssVar: "--bot-1d" },
+  { key: "5m-hybrid", label: "5-min hybrid (breakout)", color: "var(--bot-5m-hybrid)", cssVar: "--bot-5m-hybrid" },
 ];
 const STARTING_BALANCE = 100.0;
 let latestBotsData = []; // updated by load(), read by the export button handlers
