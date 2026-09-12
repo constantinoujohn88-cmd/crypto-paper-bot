@@ -1,0 +1,13 @@
+{
+  "cash_gbp": 100.0,
+  "coin_holdings": 0.0,
+  "fees_paid_gbp": 0.0,
+  "cumulative_gross_proceeds_gbp": 0.0,
+  "cumulative_net_gain_gbp": 0.0,
+  "realized_gains_by_tax_year": {},
+  "last_ma_relationship": "above",
+  "peak_since_buy": null,
+  "buy_price_for_position": null,
+  "last_trade_price": null,
+  "trade_history": []
+}
