@@ -40,7 +40,7 @@ more in fees regardless of regime."
 
 Two ways to run this continuously, plus a way to run one bot locally.
 
-### Option A: Railway (recommended - fixes GitHub's scheduling lag)
+### Running it: Railway
 
 GitHub Actions' `schedule` trigger is best-effort and gets delayed under
 load - this project hit that repeatedly in practice (a 5-minute cron
@@ -54,10 +54,18 @@ every check.
 
 It also serves the dashboard directly over HTTP from the same process
 (Railway's assigned `PORT`), reading the live working copy it just wrote
-to - so the dashboard doesn't wait on a git push *and* a GitHub Pages
-rebuild before showing a new check. GitHub Pages keeps working as a
-second, slightly-delayed copy of the same dashboard reading the same
-repo - this doesn't replace it, just adds a faster one.
+to - so the dashboard doesn't wait on a git push before showing a new
+check. This is now the *only* place the dashboard is hosted - GitHub
+Pages was dropped once Railway could serve it faster and directly, so
+there's just one URL to check instead of two slightly-out-of-sync ones.
+
+Note that Railway still depends on the GitHub **repo** itself, just not
+GitHub's *hosting* or *scheduling* - `railway_worker.py` clones a fresh
+working copy from it on every container start and pushes ledger/history
+updates back to it after every check, because that's what makes the data
+survive a redeploy or restart (Railway's own container filesystem is
+thrown away each time). That's a data store, not a dependency on GitHub
+Pages or Actions - both of those are gone.
 
 To deploy:
 1. Create a Railway project and service (`railway login`, `railway init`
@@ -83,19 +91,13 @@ To deploy:
    never properly authorized, so pushes were silently not picked up. The
    `railway up` workflow above sidesteps that failure mode entirely by
    not depending on it.)
-7. GitHub Actions' `schedule` triggers are disabled (kept as
-   `workflow_dispatch` for manual runs) so only Railway is checking the
-   bots - no duplicate/competing pushes to the same repo.
+7. There's no GitHub Actions scheduling and no GitHub Pages site anymore -
+   Railway is the only thing checking the bots and the only place the
+   dashboard is served from, so there's no duplicate/competing pushes to
+   the same repo and no second, lagging copy of the dashboard to keep in
+   sync.
 
-### Option B: GitHub Actions (free, but scheduling is best-effort)
-
-Three scheduled workflows (`.github/workflows/paper-trade-5m.yml`, `-1h.yml`,
-`-1d.yml`) each run one bot's check on its own cadence, without a server or
-a terminal window staying open - genuinely free, but subject to the
-scheduling lag described above. Each run commits that bot's updated files
-back to the repo the same way Railway does.
-
-### Running one bot locally (for testing changes before deploying either way)
+### Running one bot locally (for testing changes before deploying)
 
 ```bash
 cd crypto-paper-bot
@@ -121,9 +123,8 @@ python main.py --bot 1h --once    # single check and exit (what GitHub Actions u
 | `export_tax_csv.py` | Exports a bot's trades as a CSV formatted for a tax tool/accountant |
 | `reconcile.py` | Matches the ledger against a real Kraken trade export - for if you ever go live |
 | `backtest.py` | Tests the strategy against real historical prices instead of guessing at settings |
-| `index.html` | Static dashboard, served by GitHub Pages, comparing all three bots |
-| `.github/workflows/paper-trade-*.yml` | Scheduled Actions workflows, one per bot, on that bot's own cadence |
-| `railway_worker.py` | Persistent scheduler for Railway (or similar) - runs all three bots on a real internal clock |
+| `index.html` | Static dashboard comparing all three bots, served directly by `railway_worker.py` |
+| `railway_worker.py` | Persistent scheduler for Railway (or similar) - runs all three bots on a real internal clock, and serves `index.html` |
 | `Dockerfile` | Builds a container with `git` installed and runs `railway_worker.py` - used instead of Railway's auto-detected Python buildpack, which doesn't include git under either Nixpacks or Railpack |
 
 ## Watching your trades
@@ -131,16 +132,17 @@ python main.py --bot 1h --once    # single check and exit (what GitHub Actions u
 Each bot writes a snapshot every check to its own `history_<bot>.csv`
 (price, moving averages, signal, cash, holdings, portfolio value) in
 addition to `ledger_<bot>.json` (trade history). `index.html` is a
-dashboard that reads all three bots' files directly - no build step, no
-server - and is published via GitHub Pages at:
-
-`https://<your-username>.github.io/<repo-name>/`
+dashboard that reads all three bots' files directly - no build step -
+and is served by `railway_worker.py` itself at whatever domain you
+generated in Railway (Settings → Networking → Generate Domain).
 
 It shows a side-by-side comparison (portfolio value chart with all three
 bots overlaid, one line each) plus a per-bot detail view (price + moving
 averages + buy/sell markers, portfolio value, trade history, recent
-checks) behind tabs. It re-fetches the data every 60 seconds, so refresh
-the page (or just leave it open) to watch it update as Actions runs land.
+checks) behind tabs, each with 1H/6H/24H/7D/30D/All zoom controls so
+recent movement stays visible instead of flattening out against months
+of history. It re-fetches the data every 60 seconds, so refresh the page
+(or just leave it open) to watch it update as checks land.
 
 ## Backtesting before you trust a config
 
@@ -291,9 +293,8 @@ a volume tier, update `TRADING_FEE_PCT` to keep the simulation honest.
 - `short_period` / `long_period` — how fast/slow the two averages react
 - `interval_minutes` — the candle size the averages are computed over
 
-`CHECK_INTERVAL_SECONDS` (shared) controls how often a *local* continuous
-run checks the market - GitHub Actions ignores this and uses each
-workflow's own cron schedule instead.
+`CHECK_INTERVAL_SECONDS` (shared, also used by `railway_worker.py`)
+controls how often a continuous run checks the market for each bot.
 
 Shorter periods and smaller candles react faster but trade more often (more
 fees, more noise). There's no single "correct" setting - see the
