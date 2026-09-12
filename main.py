@@ -100,6 +100,23 @@ def check_trailing_stop(ledger: dict, bot_cfg: dict, current_price: float) -> bo
     return True
 
 
+def fee_aware_filtered(ledger: dict, bot_cfg: dict, price: float) -> bool:
+    """Returns True if a buy/sell signal should be skipped because price
+    hasn't moved far enough since the bot's last trade to plausibly clear
+    paying the round-trip fee again - see config.py's BOTS comment and
+    backtest.py's --fee-aware flag docstring for the reasoning and the
+    evidence behind each bot's threshold. Disabled (returns False) if
+    fee_aware_multiple isn't set, or there's no prior trade yet to compare
+    against - the very first trade is never filtered."""
+    multiple = bot_cfg.get("fee_aware_multiple")
+    last_trade_price = ledger.get("last_trade_price")
+    if multiple is None or last_trade_price is None:
+        return False
+    round_trip_fee_pct = config.TRADING_FEE_PCT * 2 * 100
+    move_pct = abs(price - last_trade_price) / last_trade_price * 100
+    return move_pct < round_trip_fee_pct * multiple
+
+
 def run_once(ledger: dict, bot_cfg: dict, files: dict) -> None:
     prices = data_fetcher.get_recent_closes(
         config.KRAKEN_PAIR, bot_cfg["interval_minutes"]
@@ -124,17 +141,28 @@ def run_once(ledger: dict, bot_cfg: dict, files: dict) -> None:
             current_price, signal, ledger["cash_gbp"], ledger["coin_holdings"],
         )
 
-        if signal == "buy":
+        if signal in ("buy", "sell") and fee_aware_filtered(ledger, bot_cfg, current_price):
+            logged_signal = "hold"  # filtered - not retried, same as backtest.py's --fee-aware
+            logging.info(
+                "%s signal filtered (fee-aware): price only moved %.3f%% since last "
+                "trade at £%.2f, needs %.3f%%",
+                signal.upper(), abs(current_price - ledger["last_trade_price"]) / ledger["last_trade_price"] * 100,
+                ledger["last_trade_price"], config.TRADING_FEE_PCT * 2 * 100 * bot_cfg["fee_aware_multiple"],
+            )
+        elif signal == "buy":
             if config.PAPER_MODE:
                 trade = ledger_module.execute_paper_buy(ledger, current_price, config.TRADING_FEE_PCT)
                 if ledger["coin_holdings"] > 0:
                     ledger["peak_since_buy"] = current_price
                     ledger["buy_price_for_position"] = current_price
+                    ledger["last_trade_price"] = current_price
             else:
                 place_live_order("buy", current_price)
         elif signal == "sell":
             if config.PAPER_MODE:
                 trade = ledger_module.execute_paper_sell(ledger, current_price, config.TRADING_FEE_PCT)
+                if trade:
+                    ledger["last_trade_price"] = current_price
             else:
                 place_live_order("sell", current_price)
             ledger["peak_since_buy"] = None
@@ -144,8 +172,8 @@ def run_once(ledger: dict, bot_cfg: dict, files: dict) -> None:
             logging.info("Executed %s: %s", trade["action"].upper(), trade)
 
     # Always persist, not just on a trade - last_ma_relationship (and the
-    # trailing-stop tracking fields) have to survive to the next run (a
-    # fresh process each time under GitHub Actions) to work at all.
+    # trailing-stop/fee-aware tracking fields) have to survive to the next
+    # run to work at all.
     ledger_module.save_ledger(files["ledger"], ledger)
 
     total_value = ledger_module.total_value_gbp(ledger, current_price)
@@ -174,7 +202,7 @@ def main():
     parser.add_argument(
         "--once", action="store_true",
         help="Run a single check and exit, instead of looping forever. "
-             "Used when something else does the scheduling (e.g. GitHub Actions cron).",
+             "Used when something else does the scheduling (e.g. railway_worker.py).",
     )
     args = parser.parse_args()
 

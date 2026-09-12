@@ -28,6 +28,26 @@ KRAKEN_PAIR = "XBTGBP"          # BTC/GBP on Kraken. See https://api.kraken.com/
 # happened to look good once. 5m and 1d showed no similarly robust
 # benefit on the data available at the time, so left disabled - revisit
 # once each bot's own live history is long enough to test against.
+#
+# fee_aware_multiple (optional, None = disabled): skip a buy/sell if price
+# hasn't moved at least this multiple of the round-trip fee cost since the
+# bot's LAST TRADE. Targets whipsaw specifically - reversing a position at
+# close to the same price, paying the fee twice for essentially no move.
+#
+# Backtested per-bot before enabling (see backtest.py --fee-aware): 5m
+# showed a clear, consistent improvement across every period pair and
+# multiple tested (fees are a much bigger fraction of a 5-minute candle's
+# typical move), so it's enabled here at 1.0x - exactly the round-trip fee
+# cost, a principled threshold rather than whichever backtest number
+# happened to look best. 1h showed a smaller but still real improvement at
+# low multiples (0.5x barely changed the return while roughly halving fees
+# paid) - higher multiples looked better on paper but collapsed to only 2
+# trades, the same "looks great because there's almost no sample left"
+# pattern that got the 1d trailing-stop result discarded, so 1h is enabled
+# conservatively at 0.5x rather than chasing that number. 1d showed no
+# benefit - daily moves already usually clear the fee threshold on their
+# own, so the filter barely triggers and occasionally cut a rare, large
+# winning trade instead - left disabled.
 BOTS = {
     "5m": {
         "label": "5-minute candles",
@@ -36,6 +56,7 @@ BOTS = {
         "long_period": 26,
         "trailing_stop_pct": None,
         "trailing_stop_arm_pct": None,
+        "fee_aware_multiple": 1.0,
     },
     "1h": {
         "label": "Hourly candles",
@@ -44,6 +65,7 @@ BOTS = {
         "long_period": 26,
         "trailing_stop_pct": 1.0,
         "trailing_stop_arm_pct": 0.75,
+        "fee_aware_multiple": 0.5,
     },
     "1d": {
         "label": "Daily candles",
@@ -52,6 +74,7 @@ BOTS = {
         "long_period": 26,
         "trailing_stop_pct": None,
         "trailing_stop_arm_pct": None,
+        "fee_aware_multiple": None,
     },
 }
 DEFAULT_BOT = "5m"
@@ -94,8 +117,8 @@ CGT_ANNUAL_EXEMPT_AMOUNT_GBP = 3000.0
 # at https://www.gov.uk/capital-gains-tax/rates.
 CGT_RATE = 0.24
 
-# --- Loop timing (local/manual continuous runs only - GitHub Actions uses
-# --once and its own per-bot cron schedule instead) ---
+# --- Loop timing (local/manual continuous runs only - railway_worker.py
+# uses its own CHECK_INTERVAL_SECONDS per bot instead) ---
 CHECK_INTERVAL_SECONDS = 300
 
 # --- Safety switch ---

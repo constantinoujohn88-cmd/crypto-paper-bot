@@ -24,6 +24,7 @@ def load_ledger(path: str, starting_balance: float) -> dict:
         "last_ma_relationship": None,
         "peak_since_buy": None,
         "buy_price_for_position": None,
+        "last_trade_price": None,
         "trade_history": [],
     }
 

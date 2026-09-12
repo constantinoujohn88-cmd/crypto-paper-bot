@@ -196,6 +196,43 @@ risk this whole project keeps running into) - left disabled rather than
 guess, revisit once each has enough of its own live history to test
 against properly.
 
+## Fee-aware trade filter (skipping trades too small to be worth the fee)
+
+The crossover strategy is otherwise fee-blind: it trades on every
+crossover regardless of how small the resulting move is, even though
+every round trip pays `TRADING_FEE_PCT` twice (once in, once out). In a
+choppy, sideways market that means whipsawing - reversing a position at
+close to the same price it was opened at, paying the fee twice for
+essentially no move. `config.BOTS[<key>]` optionally sets
+`fee_aware_multiple`: a buy/sell is skipped if price hasn't moved at
+least this multiple of the round-trip fee cost since the bot's *last
+trade*. A skipped signal is simply forgone, not retried - the crossover
+tracking moves on regardless.
+
+Backtested per-bot before enabling (`backtest.py --fee-aware N`): the
+5-minute bot showed a clear, consistent improvement across every period
+pair and multiple tested - unsurprising, since fees are a much bigger
+fraction of a 5-minute candle's typical move - so it's enabled there at
+1.0x, exactly the round-trip fee cost. The hourly bot showed a smaller
+but genuine improvement at low multiples (0.5x barely changed the return
+while roughly halving fees paid); higher multiples looked better on
+paper but did so by cutting the trade count down to 2, the same "looks
+great because there's almost no sample left" pattern the trailing-stop
+section above already flagged as overfitting - so the hourly bot is
+enabled conservatively at 0.5x rather than chasing that number. The
+daily bot showed no benefit (daily moves already usually clear the fee
+threshold on their own, so the filter barely triggers, and when it did
+it once cut a rare, large winning trade) - left disabled.
+
+An earlier version of this filter compared the %% gap between the short
+and long MA at the moment of crossover instead of price-since-last-trade
+- worth knowing if you're extending this, since it's a dead end: a
+crossover is *by definition* the point where the two averages are equal,
+so that gap is always ~0 exactly when a signal fires, and the filter
+ended up rejecting virtually every trade regardless of the threshold.
+Caught by testing against real data before drawing any conclusions from
+it - the version described above is what actually shipped.
+
 ## UK tax (illustrative, not advice)
 
 **This is not tax advice.** `uk_tax.py` models UK Capital Gains Tax as an
