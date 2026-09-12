@@ -56,7 +56,8 @@ def run_backtest(prices: list[float], short_period: int, long_period: int,
                   max_extension_pct: float | None = None,
                   trailing_stop_pct: float | None = None,
                   trailing_stop_arm_pct: float | None = None,
-                  fee_aware_multiple: float | None = None) -> dict:
+                  fee_aware_multiple: float | None = None,
+                  breakout_lookback: int | None = None) -> dict:
     """common_start is a shared warm-up index (the same for every parameter
     set being compared) so the buy & hold benchmark is measured over
     identical price windows across rows - each strategy still only starts
@@ -104,7 +105,21 @@ def run_backtest(prices: list[float], short_period: int, long_period: int,
     move to at least match the round-trip fee cost; 2.0 requires double
     that, etc. The very first trade is never filtered, since there's no
     prior trade price to compare against. Like the other filters, a
-    skipped signal is simply forgone, not retried."""
+    skipped signal is simply forgone, not retried.
+
+    breakout_lookback is also EXPERIMENTAL and backtest-only: a HYBRID
+    entry, not a filter - while in cash, buys immediately (independent of
+    the crossover) the moment price closes above the highest price of the
+    preceding breakout_lookback candles, instead of waiting for the short
+    MA to catch up and cross the long MA. The idea is to catch the start
+    of a fast move that a lagging crossover would otherwise miss entirely
+    (the crossover buy still exists as a fallback for slower-building
+    trends that never produce a sharp breakout). The other filters
+    (max_extension_pct, fee_aware_multiple) still apply to a
+    breakout-triggered buy exactly as they would to a crossover one - a
+    breakout right on the heels of the last trade at a similar price is
+    still a fee-losing whipsaw and still gets skipped. Selling is
+    unchanged - still crossover (and trailing stop, if enabled)."""
     ledger = {
         "cash_gbp": starting_balance,
         "coin_holdings": 0.0,
@@ -119,12 +134,21 @@ def run_backtest(prices: list[float], short_period: int, long_period: int,
     buy_price = None
     last_trade_price = None  # price of the most recent trade (buy, sell, or trailing-stop sell)
     round_trip_fee_pct = fee_pct * 2 * 100
+    breakout_count = 0
 
     for i in range(long_period, len(prices) + 1):
         window = prices[:i]
         price = window[-1]
         short_ma, long_ma = strategy.moving_averages(window, short_period, long_period)
         signal, prev_relationship = strategy.compute_signal(short_ma, long_ma, prev_relationship)
+
+        triggered_by_breakout = False
+        if (signal == "hold" and ledger["coin_holdings"] <= 0
+                and breakout_lookback is not None and i - 1 >= breakout_lookback):
+            lookback_window = prices[i - 1 - breakout_lookback:i - 1]
+            if lookback_window and price > max(lookback_window):
+                signal = "buy"
+                triggered_by_breakout = True
 
         if ledger["coin_holdings"] > 0 and trailing_stop_pct is not None:
             peak_since_buy = price if peak_since_buy is None else max(peak_since_buy, price)
@@ -158,6 +182,8 @@ def run_backtest(prices: list[float], short_period: int, long_period: int,
                 peak_since_buy = price
                 buy_price = price
                 last_trade_price = price
+                if triggered_by_breakout:
+                    breakout_count += 1
         elif signal == "sell":
             ledger_module.execute_paper_sell(ledger, price, fee_pct)
             peak_since_buy = None
@@ -184,6 +210,7 @@ def run_backtest(prices: list[float], short_period: int, long_period: int,
         "trades": len(ledger["trade_history"]),
         "filtered_count": filtered_count,
         "trailing_stop_count": trailing_stop_count,
+        "breakout_count": breakout_count,
         "return_pct": (final_value / starting_balance - 1) * 100,
         "fees_paid_gbp": ledger["fees_paid_gbp"],
         "max_drawdown_pct": max_drawdown_pct,
@@ -225,6 +252,14 @@ def main():
                               "trades unlikely to clear paying the fee twice. 1.0 = move must "
                               "at least match the round-trip fee %%, 2.0 = double that, etc. "
                               "Prints with and without for comparison when set.")
+    parser.add_argument("--breakout", type=int, default=None,
+                         help="EXPERIMENTAL, backtest-only (not used by the live bots): a "
+                              "HYBRID entry - while in cash, buy immediately the moment price "
+                              "closes above the highest price of the preceding N candles, "
+                              "instead of waiting for the crossover. Meant to catch a fast "
+                              "move a lagging crossover would otherwise miss. --max-extension "
+                              "and --fee-aware still apply to a breakout-triggered buy. Prints "
+                              "with and without for comparison when set.")
     args = parser.parse_args()
 
     bot_cfg = config.BOTS[args.bot]
@@ -263,6 +298,8 @@ def main():
             notes.append(f"{result['filtered_count']} filtered")
         if result["trailing_stop_count"]:
             notes.append(f"{result['trailing_stop_count']} trailing-stopped")
+        if result["breakout_count"]:
+            notes.append(f"{result['breakout_count']} breakout-bought")
         note_str = f" [{', '.join(notes)}]" if notes else ""
         print(f"{label:>16} {result['short_period']:>6} {result['long_period']:>6} {real:>18} "
               f"{result['trades']:>7} {result['return_pct']:>9.2f} "
@@ -283,6 +320,11 @@ def main():
         variants.append(("both", {**trail_kwargs, "max_extension_pct": args.max_extension}))
     if args.fee_aware is not None:
         variants.append((f"fee-aware{args.fee_aware:g}x", {"fee_aware_multiple": args.fee_aware}))
+    if args.breakout is not None:
+        variants.append((f"breakout{args.breakout}", {"breakout_lookback": args.breakout}))
+    if args.breakout is not None and args.fee_aware is not None:
+        variants.append(("breakout+fee-aware", {"breakout_lookback": args.breakout,
+                                                  "fee_aware_multiple": args.fee_aware}))
 
     header_label = "Variant" if len(variants) > 1 else ""
     print(f"{header_label:>16} {'Short':>6} {'Long':>6} {'(real time)':>18} {'Trades':>7} {'Return %':>9} "
@@ -301,12 +343,14 @@ def main():
           "Treat all of this as directional, not conclusive: it's a short "
           "window, and past prices don't predict future ones.")
     if len(variants) > 1:
-        print("\n--max-extension and --fee-aware are experimental and backtest-only - not "
-              "used by any live bot. --trailing-stop IS used live for bots that have "
-              "trailing_stop_pct set in config.BOTS (currently: 1h) - check there for what's "
-              "actually deployed, this flag only lets you test other values here first. A "
-              "trade shown as filtered was skipped entirely (not retried, by either filter); "
-              "a trailing-stopped sell fired early, independent of the crossover signal.")
+        print("\n--max-extension and --breakout are experimental and backtest-only - not used "
+              "by any live bot. --trailing-stop and --fee-aware ARE used live for bots that "
+              "have trailing_stop_pct/fee_aware_multiple set in config.BOTS (currently: 1h for "
+              "trailing-stop; 5m and 1h for fee-aware) - check there for what's actually "
+              "deployed, these flags only let you test other values here first. A trade shown "
+              "as filtered was skipped entirely (not retried, by either filter); a "
+              "trailing-stopped sell fired early, independent of the crossover signal; a "
+              "breakout-bought trade bought early, independent of the crossover signal.")
 
 
 if __name__ == "__main__":
