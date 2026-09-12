@@ -55,7 +55,8 @@ def run_backtest(prices: list[float], short_period: int, long_period: int,
                   fee_pct: float, starting_balance: float, common_start: int,
                   max_extension_pct: float | None = None,
                   trailing_stop_pct: float | None = None,
-                  trailing_stop_arm_pct: float | None = None) -> dict:
+                  trailing_stop_arm_pct: float | None = None,
+                  fee_aware_multiple: float | None = None) -> dict:
     """common_start is a shared warm-up index (the same for every parameter
     set being compared) so the buy & hold benchmark is measured over
     identical price windows across rows - each strategy still only starts
@@ -84,7 +85,26 @@ def run_backtest(prices: list[float], short_period: int, long_period: int,
     (not the peak). Before that, only the crossover sell can exit - a bad
     entry (e.g. bought right at a local spike) gets room to recover instead
     of being stopped out for a small loss the moment it wobbles. Ignored if
-    trailing_stop_pct isn't also set."""
+    trailing_stop_pct isn't also set.
+
+    fee_aware_multiple is also EXPERIMENTAL and backtest-only: skips a
+    buy/sell if price hasn't moved at least this multiple of the
+    round-trip fee cost (fee_pct paid twice - once in, once out) since the
+    LAST TRADE (not the last check). The idea: every round trip pays the
+    fee twice regardless of outcome, so a new trade that reverses the last
+    one at close to the same price is close to guaranteed to lose to fees
+    - this skips exactly that case, the classic whipsaw in a choppy,
+    sideways market. (An earlier version of this compared the %% gap
+    between the two MAs at the moment of crossover instead - that's a
+    dead end: a crossover is BY DEFINITION the point where the two
+    averages are equal, so that gap is always ~0 right when a signal
+    fires, and the filter ended up rejecting essentially every trade
+    regardless of the threshold. Confirmed by testing it against real
+    data before landing on this version.) A multiple of 1.0 requires the
+    move to at least match the round-trip fee cost; 2.0 requires double
+    that, etc. The very first trade is never filtered, since there's no
+    prior trade price to compare against. Like the other filters, a
+    skipped signal is simply forgone, not retried."""
     ledger = {
         "cash_gbp": starting_balance,
         "coin_holdings": 0.0,
@@ -97,6 +117,8 @@ def run_backtest(prices: list[float], short_period: int, long_period: int,
     trailing_stop_count = 0
     peak_since_buy = None
     buy_price = None
+    last_trade_price = None  # price of the most recent trade (buy, sell, or trailing-stop sell)
+    round_trip_fee_pct = fee_pct * 2 * 100
 
     for i in range(long_period, len(prices) + 1):
         window = prices[:i]
@@ -115,6 +137,7 @@ def run_backtest(prices: list[float], short_period: int, long_period: int,
                 trailing_stop_count += 1
                 peak_since_buy = None
                 buy_price = None
+                last_trade_price = price
                 equity_curve.append(ledger["cash_gbp"] + ledger["coin_holdings"] * price)
                 continue
 
@@ -123,6 +146,10 @@ def run_backtest(prices: list[float], short_period: int, long_period: int,
             extension_pct = abs(price - short_ma) / short_ma * 100
             filtered = extension_pct > max_extension_pct
 
+        if signal in ("buy", "sell") and fee_aware_multiple is not None and last_trade_price is not None:
+            move_pct = abs(price - last_trade_price) / last_trade_price * 100
+            filtered = filtered or (move_pct < round_trip_fee_pct * fee_aware_multiple)
+
         if filtered:
             filtered_count += 1
         elif signal == "buy":
@@ -130,10 +157,12 @@ def run_backtest(prices: list[float], short_period: int, long_period: int,
             if ledger["coin_holdings"] > 0:
                 peak_since_buy = price
                 buy_price = price
+                last_trade_price = price
         elif signal == "sell":
             ledger_module.execute_paper_sell(ledger, price, fee_pct)
             peak_since_buy = None
             buy_price = None
+            last_trade_price = price
 
         equity_curve.append(ledger["cash_gbp"] + ledger["coin_holdings"] * price)
 
@@ -189,6 +218,13 @@ def main():
                               "for a pullback until price has first risen at least this %% "
                               "above the buy price, so a bad entry gets room to recover "
                               "instead of being stopped out immediately.")
+    parser.add_argument("--fee-aware", type=float, default=None,
+                         help="EXPERIMENTAL, backtest-only (not used by the live bots): "
+                              "skip a buy/sell if price hasn't moved at least this multiple "
+                              "of the round-trip fee cost since the last trade - i.e. skip "
+                              "trades unlikely to clear paying the fee twice. 1.0 = move must "
+                              "at least match the round-trip fee %%, 2.0 = double that, etc. "
+                              "Prints with and without for comparison when set.")
     args = parser.parse_args()
 
     bot_cfg = config.BOTS[args.bot]
@@ -245,6 +281,8 @@ def main():
         variants.append((trail_label, trail_kwargs))
     if args.max_extension is not None and args.trailing_stop is not None:
         variants.append(("both", {**trail_kwargs, "max_extension_pct": args.max_extension}))
+    if args.fee_aware is not None:
+        variants.append((f"fee-aware{args.fee_aware:g}x", {"fee_aware_multiple": args.fee_aware}))
 
     header_label = "Variant" if len(variants) > 1 else ""
     print(f"{header_label:>16} {'Short':>6} {'Long':>6} {'(real time)':>18} {'Trades':>7} {'Return %':>9} "
@@ -263,12 +301,12 @@ def main():
           "Treat all of this as directional, not conclusive: it's a short "
           "window, and past prices don't predict future ones.")
     if len(variants) > 1:
-        print("\n--max-extension is experimental and backtest-only - not used by any live "
-              "bot. --trailing-stop IS used live for bots that have trailing_stop_pct set "
-              "in config.BOTS (currently: 1h) - check there for what's actually deployed, "
-              "this flag only lets you test other values here first. A trade shown as "
-              "filtered was skipped entirely (not retried); a trailing-stopped sell fired "
-              "early, independent of the crossover signal.")
+        print("\n--max-extension and --fee-aware are experimental and backtest-only - not "
+              "used by any live bot. --trailing-stop IS used live for bots that have "
+              "trailing_stop_pct set in config.BOTS (currently: 1h) - check there for what's "
+              "actually deployed, this flag only lets you test other values here first. A "
+              "trade shown as filtered was skipped entirely (not retried, by either filter); "
+              "a trailing-stopped sell fired early, independent of the crossover signal.")
 
 
 if __name__ == "__main__":
