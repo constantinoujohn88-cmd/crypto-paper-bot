@@ -7,7 +7,7 @@
   "realized_gains_by_tax_year": {
     "2026/27": -1.1144798714891948
   },
-  "last_ma_relationship": "above",
+  "last_ma_relationship": "below",
   "trade_history": [
     {
       "timestamp": "2026-09-11T12:46:26.851428+00:00",
